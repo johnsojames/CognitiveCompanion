@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
-import { X, Search, FileText, Code, TableProperties, Plus, Upload } from "lucide-react";
+import { X, Search, FileText, Code, TableProperties, Plus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useUserStore } from "@/store/settings";
 import { useConversationStore } from "@/store/conversation";
@@ -9,6 +9,7 @@ import { Document } from "@shared/schema";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import DocumentUpload from "@/components/document/document-upload";
 
 interface ResourcesPanelProps {
   isOpen: boolean;
@@ -211,10 +212,7 @@ export default function ResourcesPanel({ isOpen, onClose }: ResourcesPanelProps)
 
           {/* Upload Button */}
           <div className="p-4 border-t border-background-surface3">
-            <Button variant="outline" className="w-full">
-              <Upload className="mr-2 h-4 w-4" />
-              <span>Upload Document</span>
-            </Button>
+            <DocumentUpload />
           </div>
         </TabsContent>
 
