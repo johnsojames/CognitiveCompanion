@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as util from 'util';
 import vectorStore from '../vectorstore';
 import { documentChunker } from './chunker';
-import { db } from '../../db';
+import { db, pool } from '../../db';
 import { documentChunks, documents, InsertDocumentChunk } from '@shared/schema';
 import { eq } from 'drizzle-orm';
 import OpenAI from 'openai';
@@ -172,8 +172,8 @@ export class DocumentProcessor {
         // Convert embedding to string
         const embeddingStr = JSON.stringify(queryEmbedding);
         
-        // Execute the search query
-        const results = await db.execute<{document_id: number, similarity: number}>(
+        // Execute the search query using the pool directly for raw SQL
+        const results = await pool.query(
           `SELECT document_id, 1 - (embedding::float8[]::vector <=> $1::float8[]::vector) as similarity 
            FROM document_chunks 
            ORDER BY similarity DESC 
@@ -181,8 +181,8 @@ export class DocumentProcessor {
           [embeddingStr, limit]
         );
         
-        if (results.length > 0) {
-          return results.map(row => ({
+        if (results.rows && results.rows.length > 0) {
+          return results.rows.map((row: any) => ({
             id: row.document_id,
             score: row.similarity
           }));
