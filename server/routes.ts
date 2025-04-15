@@ -6,6 +6,7 @@ import { storage } from "./storage";
 import { LLMFactory } from "./lib/llm/factory";
 import { DocumentProcessor } from "./lib/document/processor";
 import { ConversationMemory } from "./lib/memory/conversation";
+import { learningIntegration } from "./lib/learning/integration";
 import { 
   insertUserSchema, 
   insertConversationSchema, 
@@ -258,14 +259,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
             messageData.conversationId
           );
           
-          // Get document contexts if available
-          const documentContexts = await Promise.all(
-            documents.map(doc => documentProcessor.getDocumentContext(doc.id, doc.filePath))
+          // Initialize the learning integration if needed
+          if (!learningIntegration.initialized) {
+            await learningIntegration.initialize();
+          }
+          
+          // Learn from the user's input text
+          await learningIntegration.learnFromUserInput(conversation.userId, messageData.content);
+          
+          // Get personalized context
+          const personalizedPrompt = await learningIntegration.enhancePrompt(
+            conversation.userId,
+            conversation.id,
+            messageData.content
           );
+          
+          // Advanced RAG search - perform multi-step retrieval if we have documents
+          let documentContexts: string[] = [];
+          if (documents.length > 0) {
+            try {
+              // Try to use advanced search for better document retrieval
+              const searchResults = await learningIntegration.advancedSearch(personalizedPrompt, 5);
+              
+              // If we got results, format them as document contexts
+              if (searchResults.length > 0) {
+                documentContexts = searchResults.map(result => {
+                  return `DOCUMENT EXCERPT [score: ${result.score.toFixed(2)}]:
+${result.content}
+---
+`;
+                });
+              } else {
+                // Fall back to basic document retrieval
+                documentContexts = await Promise.all(
+                  documents.map(doc => documentProcessor.getDocumentContext(doc.id, doc.filePath))
+                );
+              }
+            } catch (error) {
+              console.error("Error in advanced search, falling back to basic retrieval:", error);
+              // Fall back to basic document retrieval
+              documentContexts = await Promise.all(
+                documents.map(doc => documentProcessor.getDocumentContext(doc.id, doc.filePath))
+              );
+            }
+          }
           
           // Generate the AI response
           const aiResponse = await llmProvider.generateResponse(
-            messageData.content,
+            personalizedPrompt,
             memoryContext,
             documentContexts
           );
