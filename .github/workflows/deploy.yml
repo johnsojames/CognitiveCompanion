@@ -49,4 +49,4 @@ jobs:
           cd ${{ secrets.DEPLOY_PATH }}
           npm ci
           npm run db:push
-          npm run dev
+          npx pm2 start server/index.js --name rag-system
