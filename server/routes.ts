@@ -249,7 +249,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Get the LLM provider for this conversation
           const llmProvider = llmFactory.getLLMProvider(
-            conversation.modelProvider,
+            conversation.modelProvider as "claude" | "gpt" | "deepseek",
             conversation.modelName
           );
           
@@ -282,14 +282,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             userMessage,
             assistantMessage
           });
-        } catch (llmError) {
-          console.error("LLM Error:", llmError);
+        } catch (error) {
+          console.error("LLM Error:", error);
           
           // Save error as system message
           const errorMessage = await storage.createMessage({
             conversationId: messageData.conversationId,
             role: "system",
-            content: `Error generating response: ${llmError.message}`
+            content: `Error generating response: ${error instanceof Error ? error.message : String(error)}`
           });
           
           return res.status(201).json({

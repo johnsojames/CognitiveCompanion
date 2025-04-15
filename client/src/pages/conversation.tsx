@@ -98,14 +98,14 @@ export default function Conversation() {
     <div className="flex-1 flex flex-col h-full">
       <ConversationHeader 
         conversation={conversation} 
-        documents={conversation.documents}
+        documents={conversation.documents || []}
         onShowResources={handleShowResources}
       />
       
       <ChatArea 
-        messages={conversation.messages} 
+        messages={conversation.messages || []} 
         isLoading={isResponding} 
-        workingWithDocuments={conversation.documents.map(doc => doc.title)}
+        workingWithDocuments={conversation.documents ? conversation.documents.map(doc => doc.title) : []}
       />
       
       <ChatInput 
