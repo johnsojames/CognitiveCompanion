@@ -152,3 +152,28 @@ export type InsertSettings = z.infer<typeof insertSettingsSchema>;
 
 export type DocumentChunk = typeof documentChunks.$inferSelect;
 export type InsertDocumentChunk = z.infer<typeof insertDocumentChunkSchema>;
+
+// Memory system
+export const memoryEntries = pgTable("memory_entries", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  conversationId: integer("conversation_id").references(() => conversations.id),
+  type: text("type").notNull(), // "preference", "summary", "insight"
+  key: text("key").notNull(),
+  value: text("value").notNull(),
+  lastUpdated: timestamp("last_updated").defaultNow().notNull(),
+  importance: integer("importance").default(1), // 1-10 scale for memory importance
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
+export const insertMemoryEntrySchema = createInsertSchema(memoryEntries).pick({
+  userId: true,
+  conversationId: true,
+  type: true,
+  key: true,
+  value: true,
+  importance: true
+});
+
+export type MemoryEntry = typeof memoryEntries.$inferSelect;
+export type InsertMemoryEntry = z.infer<typeof insertMemoryEntrySchema>;

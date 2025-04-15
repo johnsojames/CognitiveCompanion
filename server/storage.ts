@@ -5,6 +5,7 @@ import {
   documents, type Document, type InsertDocument,
   documentConversationLinks, type DocumentConversationLink, type InsertDocumentConversationLink,
   settings, type Settings, type InsertSettings,
+  memoryEntries, type MemoryEntry, type InsertMemoryEntry,
   type ModelProvider
 } from "@shared/schema";
 
@@ -42,6 +43,15 @@ export interface IStorage {
   getSettingsByUserId(userId: number): Promise<Settings | undefined>;
   createOrUpdateSettings(settings: InsertSettings): Promise<Settings>;
   getDefaultModelByUserId(userId: number): Promise<{provider: ModelProvider, name: string} | undefined>;
+  
+  // Memory operations
+  getMemoryEntry(id: number): Promise<MemoryEntry | undefined>;
+  getMemoryEntriesByUserId(userId: number, type?: string): Promise<MemoryEntry[]>;
+  getMemoryEntriesByConversationId(conversationId: number, type?: string): Promise<MemoryEntry[]>;
+  getMemoryEntryByKey(userId: number, key: string, type?: string): Promise<MemoryEntry | undefined>;
+  createMemoryEntry(entry: InsertMemoryEntry): Promise<MemoryEntry>;
+  updateMemoryEntry(id: number, value: string, importance?: number): Promise<MemoryEntry | undefined>;
+  deleteMemoryEntry(id: number): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -51,6 +61,7 @@ export class MemStorage implements IStorage {
   private documents: Map<number, Document>;
   private documentConversationLinks: Map<number, DocumentConversationLink>;
   private settings: Map<number, Settings>;
+  private memoryEntries: Map<number, MemoryEntry>;
   
   private userId: number = 1;
   private conversationId: number = 1;
@@ -58,6 +69,7 @@ export class MemStorage implements IStorage {
   private documentId: number = 1;
   private linkId: number = 1;
   private settingsId: number = 1;
+  private memoryEntryId: number = 1;
   
   constructor() {
     this.users = new Map();
@@ -66,6 +78,7 @@ export class MemStorage implements IStorage {
     this.documents = new Map();
     this.documentConversationLinks = new Map();
     this.settings = new Map();
+    this.memoryEntries = new Map();
     
     // Initialize with a demo user
     this.createUser({
@@ -312,6 +325,73 @@ export class MemStorage implements IStorage {
       provider: settings.defaultModelProvider as ModelProvider,
       name: settings.defaultModelName,
     };
+  }
+
+  // Memory operations
+  async getMemoryEntry(id: number): Promise<MemoryEntry | undefined> {
+    return this.memoryEntries.get(id);
+  }
+
+  async getMemoryEntriesByUserId(userId: number, type?: string): Promise<MemoryEntry[]> {
+    return Array.from(this.memoryEntries.values())
+      .filter((entry) => {
+        if (entry.userId !== userId) return false;
+        if (type && entry.type !== type) return false;
+        return true;
+      })
+      .sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime());
+  }
+
+  async getMemoryEntriesByConversationId(conversationId: number, type?: string): Promise<MemoryEntry[]> {
+    return Array.from(this.memoryEntries.values())
+      .filter((entry) => {
+        if (entry.conversationId !== conversationId) return false;
+        if (type && entry.type !== type) return false;
+        return true;
+      })
+      .sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime());
+  }
+
+  async getMemoryEntryByKey(userId: number, key: string, type?: string): Promise<MemoryEntry | undefined> {
+    return Array.from(this.memoryEntries.values()).find((entry) => {
+      if (entry.userId !== userId) return false;
+      if (entry.key !== key) return false;
+      if (type && entry.type !== type) return false;
+      return true;
+    });
+  }
+
+  async createMemoryEntry(insertEntry: InsertMemoryEntry): Promise<MemoryEntry> {
+    const id = this.memoryEntryId++;
+    const now = new Date();
+    const entry: MemoryEntry = {
+      ...insertEntry,
+      id,
+      lastUpdated: now,
+      createdAt: now
+    };
+    this.memoryEntries.set(id, entry);
+    return entry;
+  }
+
+  async updateMemoryEntry(id: number, value: string, importance?: number): Promise<MemoryEntry | undefined> {
+    const entry = this.memoryEntries.get(id);
+    if (!entry) return undefined;
+
+    const now = new Date();
+    const updated: MemoryEntry = {
+      ...entry,
+      value,
+      importance: importance !== undefined ? importance : entry.importance,
+      lastUpdated: now
+    };
+    this.memoryEntries.set(id, updated);
+    return updated;
+  }
+
+  async deleteMemoryEntry(id: number): Promise<boolean> {
+    if (!this.memoryEntries.has(id)) return false;
+    return this.memoryEntries.delete(id);
   }
 }
 
