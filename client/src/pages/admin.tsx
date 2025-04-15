@@ -59,11 +59,9 @@ export default function AdminPage() {
   const { data: systemStatus, isLoading: loadingStatus, error: statusError } = useQuery({
     queryKey: ['/api/admin/status'],
     queryFn: async () => {
-      // For demo purposes, since we don't have a backend API yet:
-      // return mockSystemStatus;
       try {
-        const response = await apiRequest('/api/admin/status');
-        return response as SystemStatus;
+        const response = await apiRequest<SystemStatus>('GET', '/api/admin/status');
+        return response;
       } catch (error) {
         console.error('Error fetching system status:', error);
         return null;
@@ -75,11 +73,9 @@ export default function AdminPage() {
   const { data: modelStats, isLoading: loadingModels } = useQuery({
     queryKey: ['/api/admin/models'],
     queryFn: async () => {
-      // For demo purposes, since we don't have a backend API yet:
-      // return mockModelStats;
       try {
-        const response = await apiRequest('/api/admin/models');
-        return response as ModelStats[];
+        const response = await apiRequest<ModelStats[]>('GET', '/api/admin/models');
+        return response;
       } catch (error) {
         console.error('Error fetching model stats:', error);
         return [];
@@ -91,11 +87,9 @@ export default function AdminPage() {
   const { data: ragMetrics, isLoading: loadingMetrics } = useQuery({
     queryKey: ['/api/admin/rag-metrics'],
     queryFn: async () => {
-      // For demo purposes, since we don't have a backend API yet:
-      // return mockRAGMetrics;
       try {
-        const response = await apiRequest('/api/admin/rag-metrics');
-        return response as RAGMetrics;
+        const response = await apiRequest<RAGMetrics>('GET', '/api/admin/rag-metrics');
+        return response;
       } catch (error) {
         console.error('Error fetching RAG metrics:', error);
         return null;
@@ -106,9 +100,7 @@ export default function AdminPage() {
   // Reset vector store mutation
   const resetMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest('/api/admin/reset-vectorstore', {
-        method: 'POST',
-      });
+      return await apiRequest<{ success: boolean; message: string }>('POST', '/api/admin/reset-vectorstore');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/admin/status'] });
@@ -119,9 +111,7 @@ export default function AdminPage() {
   // Reindex documents mutation
   const reindexMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest('/api/admin/reindex-documents', {
-        method: 'POST',
-      });
+      return await apiRequest<{ success: boolean; message: string }>('POST', '/api/admin/reindex-documents');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/admin/status'] });
