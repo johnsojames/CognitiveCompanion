@@ -102,6 +102,25 @@ export const insertSettingsSchema = createInsertSchema(settings).pick({
   memoryLimit: true,
 });
 
+// Document Chunks
+export const documentChunks = pgTable("document_chunks", {
+  id: serial("id").primaryKey(),
+  documentId: integer("document_id").notNull(),
+  chunkIndex: integer("chunk_index").notNull(),
+  content: text("content").notNull(),
+  metadata: jsonb("metadata").notNull(),
+  embedding: text("embedding"), // Stored as a string representation of vector
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertDocumentChunkSchema = createInsertSchema(documentChunks).pick({
+  documentId: true,
+  chunkIndex: true,
+  content: true,
+  metadata: true,
+  embedding: true,
+});
+
 // Model types
 
 export const modelProviders = ["claude", "gpt", "deepseek"] as const;
@@ -130,3 +149,6 @@ export type InsertDocumentConversationLink = z.infer<typeof insertDocumentConver
 
 export type Settings = typeof settings.$inferSelect;
 export type InsertSettings = z.infer<typeof insertSettingsSchema>;
+
+export type DocumentChunk = typeof documentChunks.$inferSelect;
+export type InsertDocumentChunk = z.infer<typeof insertDocumentChunkSchema>;
