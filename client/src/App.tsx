@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import Home from "@/pages/home";
 import Conversation from "@/pages/conversation";
 import Settings from "@/pages/settings";
+import Admin from "@/pages/admin";
 import NotFound from "@/pages/not-found";
 
 // Components
@@ -24,6 +25,7 @@ function App() {
         <Route path="/" component={Home} />
         <Route path="/conversation/:id" component={Conversation} />
         <Route path="/settings" component={Settings} />
+        <Route path="/admin" component={Admin} />
         <Route component={NotFound} />
       </Switch>
     </AppShell>

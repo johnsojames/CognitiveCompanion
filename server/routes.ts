@@ -40,6 +40,10 @@ const llmFactory = new LLMFactory();
 const documentProcessor = new DocumentProcessor();
 const conversationMemory = new ConversationMemory();
 
+// Initialize vector store for admin operations
+import { createVectorStore } from "./lib/vectorstore";
+const vectorStore = createVectorStore();
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 

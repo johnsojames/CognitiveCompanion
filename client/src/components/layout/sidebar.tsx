@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Settings, Trash2, Plus, Music2, TableProperties, Code, ChevronDown, Zap } from "lucide-react";
+import { Settings, Trash2, Plus, Music2, TableProperties, Code, ChevronDown, Zap, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { Conversation, Document } from "@shared/schema";
@@ -155,7 +155,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
 
       {/* Settings & Info */}
       <div className="p-4 border-t border-sidebar-border">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center">
             <Zap className="w-4 h-4 text-sidebar-foreground/70 mr-2" />
             <div>
@@ -166,11 +166,18 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               </div>
             </div>
           </div>
-          <Link href="/settings">
-            <button className="text-sidebar-foreground/70 hover:text-sidebar-primary">
-              <Settings className="w-4 h-4" />
-            </button>
-          </Link>
+          <div className="flex space-x-3">
+            <Link href="/admin">
+              <button className="text-sidebar-foreground/70 hover:text-sidebar-primary">
+                <Shield className="w-4 h-4" />
+              </button>
+            </Link>
+            <Link href="/settings">
+              <button className="text-sidebar-foreground/70 hover:text-sidebar-primary">
+                <Settings className="w-4 h-4" />
+              </button>
+            </Link>
+          </div>
         </div>
       </div>
     </aside>
