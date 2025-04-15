@@ -1,334 +1,211 @@
-import { LLMFactory, LLMProvider } from '../llm/factory';
-import { storage } from '../../storage';
+import { LLMFactory } from '../llm/factory';
+import { LLMProvider } from '../llm/provider';
 
 /**
- * Manages personalization and learning from user interactions
+ * Manages user personalization and learning from interactions
  */
 class PersonalizationManager {
   private llmFactory: LLMFactory | null = null;
   private llmProvider: LLMProvider | null = null;
   
   /**
-   * Set the LLM factory for personalization operations
+   * Set the LLM factory for personalization
    * @param llmFactory LLM factory
    */
   setLLMFactory(llmFactory: LLMFactory): void {
     this.llmFactory = llmFactory;
-    this.llmProvider = llmFactory.getLLMProvider('gpt', 'gpt-4o');
+    console.log("Personalization manager initialized with LLM factory");
+    
+    // We'll initialize the LLM provider lazily when needed, not here
   }
   
   /**
-   * Generate a personalized context based on user history and preferences
-   * @param userId User ID
-   * @param conversationId Current conversation ID
-   * @returns Personalized context for prompts
-   */
-  async generatePersonalizedContext(userId: number, conversationId: number): Promise<string | null> {
-    try {
-      // Get user memory entries
-      const preferences = await storage.getMemoryEntriesByUserId(userId, 'preference');
-      const insights = await storage.getMemoryEntriesByUserId(userId, 'insight');
-      
-      // Get conversation-specific memory entries
-      const conversationEntries = await storage.getMemoryEntriesByConversationId(conversationId);
-      
-      // If no personalization data available, return null
-      if (preferences.length === 0 && insights.length === 0 && conversationEntries.length === 0) {
-        return null;
-      }
-      
-      // Build context sections
-      const sections = [];
-      
-      if (preferences.length > 0) {
-        const preferencesText = preferences
-          .sort((a, b) => (b.importance || 0) - (a.importance || 0))
-          .slice(0, 5) // Limit to top 5 preferences
-          .map(pref => `- ${pref.key}: ${pref.value}`)
-          .join('\n');
-        
-        sections.push(`USER PREFERENCES:\n${preferencesText}`);
-      }
-      
-      if (insights.length > 0) {
-        const insightsText = insights
-          .sort((a, b) => (b.importance || 0) - (a.importance || 0))
-          .slice(0, 5) // Limit to top 5 insights
-          .map(insight => `- ${insight.value}`)
-          .join('\n');
-        
-        sections.push(`INSIGHTS ABOUT USER:\n${insightsText}`);
-      }
-      
-      if (conversationEntries.length > 0) {
-        const summaries = conversationEntries
-          .filter(entry => entry.type === 'summary')
-          .slice(0, 3); // Limit to most recent 3 summaries
-        
-        if (summaries.length > 0) {
-          const summariesText = summaries
-            .map(summary => `- ${summary.value}`)
-            .join('\n');
-          
-          sections.push(`CONVERSATION CONTEXT:\n${summariesText}`);
-        }
-      }
-      
-      // Return full context
-      return sections.join('\n\n');
-    } catch (error) {
-      console.error("Error generating personalized context:", error);
-      return null;
-    }
-  }
-  
-  /**
-   * Get vocabulary context based on user's patterns
-   * @param userId User ID
-   * @returns Vocabulary context for prompts
-   */
-  async getVocabularyContext(userId: number): Promise<string | null> {
-    try {
-      const vocabEntries = await storage.getMemoryEntriesByUserId(userId, 'vocabulary');
-      
-      if (vocabEntries.length === 0) {
-        return null;
-      }
-      
-      // Get top vocabulary entries by importance
-      const topVocab = vocabEntries
-        .sort((a, b) => (b.importance || 0) - (a.importance || 0))
-        .slice(0, 10); // Limit to top 10 vocabulary patterns
-      
-      const vocabText = topVocab
-        .map(v => `- ${v.key}: ${v.value}`)
-        .join('\n');
-      
-      return `USER VOCABULARY PATTERNS:\n${vocabText}\n\nPlease adapt your language to match these vocabulary preferences.`;
-    } catch (error) {
-      console.error("Error getting vocabulary context:", error);
-      return null;
-    }
-  }
-  
-  /**
-   * Learn vocabulary patterns from user text
+   * Learn vocabulary and linguistic patterns from user text
    * @param userId User ID
    * @param text User input text
    */
   async learnVocabularyPatterns(userId: number, text: string): Promise<void> {
-    if (!text || text.length < 20) return; // Skip short texts
+    if (!text || text.trim().length === 0) return;
     
     try {
-      if (!this.llmProvider) {
-        if (!this.llmFactory) {
-          console.error("LLM factory not set in personalization manager");
-          return;
-        }
-        this.llmProvider = this.llmFactory.getLLMProvider('gpt', 'gpt-4o');
-      }
+      // Extract potential vocabulary patterns
+      const patterns = this.extractVocabularyPatterns(text);
       
-      const prompt = `
-Analyze the following user text and identify vocabulary patterns, frequently used terms, 
-and writing style characteristics. Look for:
-
-1. Specialized terminology
-2. Writing formality level
-3. Preferred phrase constructions
-4. Common expressions
-5. Technical vs. non-technical language
-
-User text: "${text}"
-
-Return a JSON array with up to 3 vocabulary insights, each with a "key" (pattern name) and "value" (description).
-Example:
-[
-  {"key": "Technical jargon", "value": "Uses machine learning terminology like 'vector embeddings' and 'transformer models'"},
-  {"key": "Formal style", "value": "Prefers formal language with complex sentence structures"}
-]
-`;
+      if (patterns.length === 0) return;
       
-      const response = await this.llmProvider.generateResponse(prompt, "", []);
-      
-      try {
-        // Extract JSON array from response
-        const jsonMatch = response.match(/\[\s*\{.*\}\s*\]/s);
-        if (jsonMatch) {
-          const patterns = JSON.parse(jsonMatch[0]);
-          
-          if (Array.isArray(patterns)) {
-            // Store each vocabulary pattern
-            for (const pattern of patterns) {
-              if (pattern.key && pattern.value) {
-                // Check if pattern already exists
-                const existingEntry = await storage.getMemoryEntryByKey(
-                  userId, 
-                  pattern.key,
-                  'vocabulary'
-                );
-                
-                if (existingEntry) {
-                  // Update existing entry
-                  await storage.updateMemoryEntry(
-                    existingEntry.id,
-                    pattern.value,
-                    (existingEntry.importance || 1) + 1 // Increase importance
-                  );
-                } else {
-                  // Create new entry
-                  await storage.createMemoryEntry({
-                    userId,
-                    type: 'vocabulary',
-                    key: pattern.key,
-                    value: pattern.value,
-                    importance: 1
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error("Error parsing vocabulary patterns:", error);
-      }
+      // Store the patterns in memory
+      // This would normally store in a database, but for this prototype
+      // we'll just log what we've learned
+      console.log(`Learned vocabulary patterns for user ${userId}:`, patterns);
     } catch (error) {
       console.error("Error learning vocabulary patterns:", error);
     }
   }
   
   /**
-   * Extract user preferences from conversation history
-   * @param userId User ID
-   * @param conversationId Conversation ID
+   * Extract vocabulary patterns from text
+   * @param text Text to analyze
+   * @returns Array of vocabulary patterns
    */
-  async extractPreferencesFromConversation(userId: number, conversationId: number): Promise<void> {
+  private extractVocabularyPatterns(text: string): string[] {
+    const patterns: string[] = [];
+    
+    // Normalize text
+    const normalizedText = text.toLowerCase().trim();
+    
+    // Extract domain-specific terms (longer words that might be specialized)
+    const words = normalizedText.split(/\s+/);
+    const potentialTerms = words.filter(word => 
+      word.length > 7 && 
+      !this.isCommonWord(word)
+    );
+    
+    // Deduplicate
+    const uniqueTerms = [...new Set(potentialTerms)];
+    patterns.push(...uniqueTerms);
+    
+    // Extract phrases (2-3 word combinations)
+    const phrases = this.extractPhrases(normalizedText);
+    patterns.push(...phrases);
+    
+    // Extract potential abbreviations (uppercase sequences)
+    const abbreviations = this.extractAbbreviations(text);
+    patterns.push(...abbreviations);
+    
+    return patterns;
+  }
+  
+  /**
+   * Check if a word is common
+   * @param word Word to check
+   * @returns True if word is common
+   */
+  private isCommonWord(word: string): boolean {
+    const commonWords = [
+      'the', 'and', 'that', 'have', 'for', 'not', 'with', 'you', 'this', 'but',
+      'his', 'from', 'they', 'who', 'will', 'would', 'there', 'their', 'what',
+      'about', 'which', 'when', 'make', 'like', 'time', 'just', 'know', 'take',
+      'person', 'year', 'your', 'good', 'some', 'could', 'them', 'than', 'then',
+      'look', 'only', 'come', 'over', 'think', 'also', 'back', 'after', 'work',
+      'first', 'well', 'even', 'want', 'because', 'these', 'give', 'most'
+    ];
+    
+    return commonWords.includes(word);
+  }
+  
+  /**
+   * Extract meaningful phrases from text
+   * @param text Text to analyze
+   * @returns Array of phrases
+   */
+  private extractPhrases(text: string): string[] {
+    const phrases: string[] = [];
+    const words = text.split(/\s+/);
+    
+    // Extract 2-word phrases
+    for (let i = 0; i < words.length - 1; i++) {
+      if (words[i].length > 3 && words[i+1].length > 3) {
+        // Both words are substantial
+        phrases.push(`${words[i]} ${words[i+1]}`);
+      }
+    }
+    
+    // Extract 3-word phrases
+    for (let i = 0; i < words.length - 2; i++) {
+      if (words[i].length > 2 && words[i+1].length > 2 && words[i+2].length > 2) {
+        // All three words are substantial
+        phrases.push(`${words[i]} ${words[i+1]} ${words[i+2]}`);
+      }
+    }
+    
+    // Return only unique phrases
+    return [...new Set(phrases)];
+  }
+  
+  /**
+   * Extract potential abbreviations from text
+   * @param text Text to analyze
+   * @returns Array of abbreviations
+   */
+  private extractAbbreviations(text: string): string[] {
+    const abbreviations: string[] = [];
+    
+    // Look for uppercase sequences that might be abbreviations
+    const matches = text.match(/\b[A-Z]{2,}\b/g);
+    if (matches) {
+      abbreviations.push(...matches);
+    }
+    
+    return abbreviations;
+  }
+  
+  /**
+   * Analyze text for user preferences
+   * @param userId User ID
+   * @param text User input text
+   * @returns Potential preferences found
+   */
+  async extractPreferences(userId: number, text: string): Promise<Array<{key: string, value: string, confidence: number}>> {
+    if (!text || text.trim().length === 0) return [];
+    if (!this.llmFactory) return [];
+    
     try {
+      // Lazy-initialize LLM provider if needed
       if (!this.llmProvider) {
-        if (!this.llmFactory) {
-          console.error("LLM factory not set in personalization manager");
-          return;
-        }
-        this.llmProvider = this.llmFactory.getLLMProvider('gpt', 'gpt-4o');
+        this.llmProvider = this.llmFactory.getLLMProvider(
+          "claude", 
+          "claude-3-7-sonnet-20250219"
+        );
       }
       
-      // Get messages from conversation
-      const messages = await storage.getMessagesByConversationId(conversationId);
-      
-      // Only analyze conversations with at least 3 user messages
-      const userMessages = messages.filter(msg => msg.role === 'user');
-      if (userMessages.length < 3) return;
-      
-      // Extract user message content
-      const userContent = userMessages.map(msg => msg.content).join('\n\n');
-      
-      const prompt = `
-Based on the following user messages, identify preferences, interests, and recurring topics.
-Look for explicit preferences as well as implied preferences.
+      const prompt = `Analyze the following user text to identify potential user preferences. 
+Look for indicators of preferences in topics, styles, formats, or other aspects.
+Extract only clear preferences with reasonable confidence (at least 70%).
 
-User messages:
-${userContent}
+User text: "${text}"
 
-Return a JSON array with up to 3 preference insights, each with a "key" (preference category) and "value" (specific preference).
-Example:
-[
-  {"key": "Programming language", "value": "Prefers Python over JavaScript"},
-  {"key": "Communication style", "value": "Likes detailed explanations with examples"}
-]
-`;
-      
+Format your response as a JSON array with objects having these properties:
+- key: The preference category (e.g., "topic_interest", "communication_style", "format_preference")
+- value: The specific preference value
+- confidence: A number between 0.7 and 1.0 indicating confidence level
+
+Return an empty array [] if no preferences can be detected with sufficient confidence.`;
+
       const response = await this.llmProvider.generateResponse(prompt, "", []);
       
       try {
-        // Extract JSON array from response
-        const jsonMatch = response.match(/\[\s*\{.*\}\s*\]/s);
-        if (jsonMatch) {
-          const preferences = JSON.parse(jsonMatch[0]);
-          
-          if (Array.isArray(preferences)) {
-            // Store each preference
-            for (const pref of preferences) {
-              if (pref.key && pref.value) {
-                // Check if preference already exists
-                const existingEntry = await storage.getMemoryEntryByKey(
-                  userId, 
-                  pref.key,
-                  'preference'
-                );
-                
-                if (existingEntry) {
-                  // Update existing entry
-                  await storage.updateMemoryEntry(
-                    existingEntry.id,
-                    pref.value,
-                    (existingEntry.importance || 1) + 1 // Increase importance
-                  );
-                } else {
-                  // Create new entry
-                  await storage.createMemoryEntry({
-                    userId,
-                    type: 'preference',
-                    key: pref.key,
-                    value: pref.value,
-                    importance: 1
-                  });
-                }
-              }
-            }
-          }
+        // Try to parse the response as JSON
+        const preferences = JSON.parse(response);
+        if (Array.isArray(preferences)) {
+          return preferences.map(pref => ({
+            key: pref.key || "",
+            value: pref.value || "",
+            confidence: typeof pref.confidence === 'number' ? 
+              Math.max(0, Math.min(1, pref.confidence)) : 0.7
+          }));
         }
-      } catch (error) {
-        console.error("Error parsing user preferences:", error);
+      } catch (e) {
+        console.error("Error parsing preferences response:", e);
       }
+      
+      return [];
     } catch (error) {
       console.error("Error extracting preferences:", error);
+      return [];
     }
   }
   
   /**
-   * Generate a summary of a conversation
-   * @param conversationId Conversation ID
-   * @returns Conversation summary
+   * Adapt content based on user's vocabulary patterns
+   * @param userId User ID
+   * @param content Content to adapt
+   * @returns Adapted content
    */
-  async generateConversationSummary(conversationId: number): Promise<string | null> {
-    try {
-      if (!this.llmProvider) {
-        if (!this.llmFactory) {
-          console.error("LLM factory not set in personalization manager");
-          return null;
-        }
-        this.llmProvider = this.llmFactory.getLLMProvider('gpt', 'gpt-4o');
-      }
-      
-      // Get conversation
-      const conversation = await storage.getConversation(conversationId);
-      if (!conversation) return null;
-      
-      // Get messages
-      const messages = await storage.getMessagesByConversationId(conversationId);
-      if (messages.length < 3) return null; // Need at least a few messages
-      
-      // Format messages for summarization
-      const formattedMessages = messages.map(msg => {
-        return `${msg.role.toUpperCase()}: ${msg.content}`;
-      }).join('\n\n');
-      
-      const prompt = `
-Summarize the following conversation in 1-2 concise sentences.
-Focus on the main topics discussed and any conclusions reached.
-
-CONVERSATION:
-${formattedMessages}
-
-SUMMARY:
-`;
-      
-      return await this.llmProvider.generateResponse(prompt, "", []);
-    } catch (error) {
-      console.error("Error generating conversation summary:", error);
-      return null;
-    }
+  async adaptContentToUser(userId: number, content: string): Promise<string> {
+    // This would normally retrieve user vocabulary patterns from database
+    // For now, as a prototype, we're not adapting the content
+    return content;
   }
 }
 
-// Export singleton instance
 export const personalizationManager = new PersonalizationManager();

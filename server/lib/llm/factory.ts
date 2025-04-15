@@ -2,20 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { personalizationManager } from '../learning/personalization';
 import { fineTuningManager } from '../learning/fine-tuning';
-
-/**
- * Interface for LLM providers
- */
-export interface LLMProvider {
-  /**
-   * Generate a response to a prompt
-   * @param prompt The prompt to generate a response for
-   * @param systemContext Additional system context
-   * @param documentContexts Document contexts
-   * @returns Generated response
-   */
-  generateResponse(prompt: string, systemContext: string, documentContexts: string[]): Promise<string>;
-}
+import { LLMProvider } from './provider';
 
 /**
  * Claude (Anthropic) LLM provider
@@ -162,9 +149,8 @@ export class LLMFactory {
    * @returns LLM provider
    */
   getLLMProvider(provider: string, model: string): LLMProvider {
-    // Set up personalization and fine-tuning
-    personalizationManager.setLLMFactory(this);
-    fineTuningManager.setLLMFactory(this);
+    // Don't initialize here - this causes infinite recursion
+    // This should be done once at application startup
     
     switch (provider.toLowerCase()) {
       case 'claude':

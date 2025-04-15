@@ -28,11 +28,11 @@ class LearningIntegration {
       // Create LLM factory
       this.llmFactory = new LLMFactory();
       
-      // Initialize personalization manager
+      // Explicitly set up managers first to avoid circular initialization
       personalizationManager.setLLMFactory(this.llmFactory);
-      
-      // Initialize fine-tuning manager and schedule jobs
       fineTuningManager.setLLMFactory(this.llmFactory);
+      
+      // Only after initialization, schedule any tasks
       fineTuningManager.scheduleRegularFineTuning(30); // Every 30 days
       
       // Initialize RAG components
