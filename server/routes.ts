@@ -528,6 +528,181 @@ ${result.content}
     }
   });
   
+  // === Admin routes ===
+  
+  // Get system status
+  app.get('/api/admin/status', async (req, res) => {
+    try {
+      // Count documents in storage
+      const allDocuments = await storage.getAllDocuments();
+      const documentCount = allDocuments ? allDocuments.length : 0;
+      
+      // Get vector store type
+      const vectorStoreType = process.env.PGVECTOR_ENABLED === 'true' ? 'PostgreSQL' : 'Memory';
+      
+      // Get memory usage stats - approximate
+      const memoryUsage = process.memoryUsage();
+      const memoryStats = {
+        total: Math.round(memoryUsage.heapTotal / (1024 * 1024)),
+        used: Math.round(memoryUsage.heapUsed / (1024 * 1024))
+      };
+      
+      // Get available model providers
+      const modelProviders = ["claude", "gpt"];
+      if (process.env.DEEPSEEK_API_KEY) {
+        modelProviders.push("deepseek");
+      }
+      
+      res.json({
+        vectorStoreType,
+        documentCount,
+        isHealthy: true, // We could add more sophisticated health checks here
+        modelProviders,
+        lastUpdated: new Date().toISOString(),
+        memoryUsage: memoryStats
+      });
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Get model usage statistics
+  app.get('/api/admin/models', async (req, res) => {
+    try {
+      // This would normally come from a database or metrics service
+      // For this prototype, we'll return mock data
+      const modelStats = [
+        {
+          provider: 'claude',
+          name: 'claude-3-7-sonnet-20250219',
+          requestCount: 245,
+          averageLatency: 1.34,
+          lastUsed: new Date().toISOString()
+        },
+        {
+          provider: 'gpt',
+          name: 'gpt-4o',
+          requestCount: 189,
+          averageLatency: 0.98,
+          lastUsed: new Date().toISOString()
+        }
+      ];
+      
+      res.json(modelStats);
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Get RAG metrics
+  app.get('/api/admin/rag-metrics', async (req, res) => {
+    try {
+      // This would normally come from a database tracking search metrics
+      // For this prototype, we'll return demo data
+      
+      // Get actual document count
+      const allDocuments = await storage.getAllDocuments();
+      const documentCount = allDocuments ? allDocuments.length : 0;
+      
+      // Group documents by type
+      const documentTypes: Record<string, number> = {};
+      if (allDocuments) {
+        allDocuments.forEach(doc => {
+          const fileType = doc.fileType || 'unknown';
+          if (!documentTypes[fileType]) {
+            documentTypes[fileType] = 0;
+          }
+          documentTypes[fileType]++;
+        });
+      }
+      
+      const byType = Object.entries(documentTypes).map(([type, count]) => ({
+        type,
+        count
+      }));
+      
+      res.json({
+        retrievalStats: {
+          totalQueries: 434,
+          averageResults: 4.2,
+          topReformulations: [
+            { query: 'cloud architecture', count: 23 },
+            { query: 'docker containerization', count: 19 },
+            { query: 'kubernetes deployment', count: 17 }
+          ]
+        },
+        documentStats: {
+          totalDocuments: documentCount,
+          byType,
+          averageTokens: 1250
+        }
+      });
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Reset vector store
+  app.post('/api/admin/reset-vectorstore', async (req, res) => {
+    try {
+      // This is a placeholder for what would actually be a more complex operation
+      // In a real system, this would delete all vector embeddings but keep original documents
+      
+      // We'll just log the request for now
+      console.log('Vector store reset requested');
+      
+      // In a real implementation, you might do something like this:
+      // await vectorStore.reset();
+      
+      // For any documents in storage, mark them as not vectorized
+      const allDocuments = await storage.getAllDocuments();
+      if (allDocuments) {
+        for (const doc of allDocuments) {
+          await storage.updateDocumentVectorized(doc.id, false);
+        }
+      }
+      
+      res.json({ success: true, message: "Vector store has been reset" });
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Reindex all documents
+  app.post('/api/admin/reindex-documents', async (req, res) => {
+    try {
+      // Get all documents
+      const allDocuments = await storage.getAllDocuments();
+      
+      if (!allDocuments || allDocuments.length === 0) {
+        return res.status(404).json({ message: "No documents found to reindex" });
+      }
+      
+      // Start a background process to reindex them
+      // In a real system, this would be a job queue
+      setTimeout(async () => {
+        try {
+          for (const doc of allDocuments) {
+            // Process each document
+            await documentProcessor.processDocument(doc.id, doc.filePath, doc.fileType);
+            // Update document status
+            await storage.updateDocumentVectorized(doc.id, true);
+          }
+          console.log(`Reindexed ${allDocuments.length} documents`);
+        } catch (error) {
+          console.error("Error in background reindexing job:", error);
+        }
+      }, 100);
+      
+      res.json({ 
+        success: true, 
+        message: `Started reindexing ${allDocuments.length} documents` 
+      });
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
   // Get a specific memory entry by type and key
   app.get('/api/memory/:userId/:type/:key', async (req, res) => {
     try {

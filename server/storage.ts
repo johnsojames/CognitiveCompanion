@@ -31,6 +31,7 @@ export interface IStorage {
   getDocument(id: number): Promise<Document | undefined>;
   getDocumentsByUserId(userId: number): Promise<Document[]>;
   getDocumentsByConversationId(conversationId: number): Promise<Document[]>;
+  getAllDocuments(): Promise<Document[]>;
   createDocument(document: InsertDocument): Promise<Document>;
   updateDocumentVectorized(id: number, vectorized: boolean): Promise<Document | undefined>;
   deleteDocument(id: number): Promise<boolean>;
@@ -221,6 +222,11 @@ export class MemStorage implements IStorage {
     // Return the documents that have links to this conversation
     return Array.from(this.documents.values())
       .filter((document) => linkDocIds.includes(document.id));
+  }
+  
+  async getAllDocuments(): Promise<Document[]> {
+    // Return all documents in storage
+    return Array.from(this.documents.values());
   }
   
   async createDocument(insertDocument: InsertDocument): Promise<Document> {
