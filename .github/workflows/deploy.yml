@@ -2,51 +2,33 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [ main ]  # Change to 'master' if that's your default branch
+    branches: [ main ]  # Change to your branch name if different
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
       
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18.x'
-        
-    - name: Install dependencies
-      run: npm ci
-      
-    - name: Build application
-      run: npm run build
-      
-    - name: Setup SSH Key
-      uses: shimataro/ssh-key-action@v2
-      with:
-        key: ${{ secrets.VPS_SSH }}
-        known_hosts: 'just-a-placeholder-so-we-dont-get-errors'
-        
-    - name: Adding Known Hosts
-      run: ssh-keyscan -p ${{ secrets.SSH_PORT }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-      
-    - name: Deploy with rsync
-      run: |
-        rsync -avz --delete -e "ssh -p ${{ secrets.SSH_PORT }}" \
-          --exclude='.git/' \
-          --exclude='.github/' \
-          --exclude='node_modules/' \
-          ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}
+      - name: Deploy with rsync
+        uses: burnett01/rsync-deployments@5.2
+        with:
+          switches: -avz --delete
+          path: ./
+          remote_path: ${{ secrets.DEPLOY_PATH }}
+          remote_host: ${{ secrets.DEPLOY_HOST }}
+          remote_user: ${{ secrets.DEPLOY_USER }}
+          remote_key: ${{ secrets.VPS_SSH }}
           
-    - name: Execute remote SSH commands
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.SSH_HOST }}
-        username: ${{ secrets.SSH_USERNAME }}
-        key: ${{ secrets.VPS_SSH }}
-        port: ${{ secrets.SSH_PORT }}
-        script: |
-          cd ${{ secrets.DEPLOY_PATH }}
-          npm ci
-          npm run db:push
-          npx pm2 start server/index.js --name rag-system
+      - name: Execute remote SSH commands
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.VPS_SSH }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            npm ci
+            npm run db:push
+            npx pm2 restart rag-system || npx pm2 start server/index.js --name rag-system
