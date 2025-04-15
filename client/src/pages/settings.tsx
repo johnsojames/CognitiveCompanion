@@ -39,6 +39,7 @@ import { useUserStore } from "@/store/settings";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { settingsAPI } from "@/lib/api";
 import { modelProviders, insertSettingsSchema } from "@shared/schema";
+import { MemoryInsights } from "@/components/memory/memory-insights";
 
 const profileFormSchema = z.object({
   username: z.string().min(3).max(50),
@@ -368,6 +369,11 @@ export default function Settings() {
           </Card>
         </div>
 
+        {/* Memory System */}
+        <div className="mt-8 mb-8">
+          <MemoryInsights />
+        </div>
+        
         {/* System Information */}
         <div className="mt-8">
           <Card>

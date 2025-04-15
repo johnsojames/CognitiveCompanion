@@ -4,7 +4,8 @@ import {
   Message, InsertMessage,
   Document, InsertDocument,
   InsertDocumentConversationLink,
-  Settings, InsertSettings
+  Settings, InsertSettings,
+  MemoryEntry, InsertMemoryEntry
 } from "@shared/schema";
 
 // API request function
@@ -112,16 +113,29 @@ export const settingsAPI = {
 export const memoryAPI = {
   getUserMemory: (userId: number) => 
     apiRequest<{
-      summaries: any[],
-      insights: any[],
-      preferences: any[]
+      summaries: MemoryEntry[],
+      insights: MemoryEntry[],
+      preferences: MemoryEntry[]
     }>('GET', `/api/memory/${userId}`),
   
   getMemoryEntry: (userId: number, type: string, key: string) => 
-    apiRequest<any>('GET', `/api/memory/${userId}/${type}/${key}`),
+    apiRequest<MemoryEntry>('GET', `/api/memory/${userId}/${type}/${key}`),
   
   storePreference: (userId: number, key: string, value: string, importance?: number) => 
-    apiRequest<{success: boolean}>('POST', '/api/memory/preference', {
+    apiRequest<MemoryEntry>('POST', '/api/memory/preference', {
       userId, key, value, importance
     }),
+    
+  storeInsight: (userId: number, conversationId: number, key: string, value: string, importance?: number) => 
+    apiRequest<MemoryEntry>('POST', '/api/memory/insight', {
+      userId, conversationId, key, value, importance
+    }),
+    
+  storeSummary: (userId: number, conversationId: number, value: string) => 
+    apiRequest<MemoryEntry>('POST', '/api/memory/summary', {
+      userId, conversationId, value
+    }),
+    
+  deleteEntry: (id: number) => 
+    apiRequest<{success: boolean}>('DELETE', `/api/memory/${id}`),
 };
