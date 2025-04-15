@@ -277,6 +277,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
             content: aiResponse
           });
           
+          // Asynchronously analyze and extract insights from the conversation 
+          // to enhance long-term memory (non-blocking)
+          setTimeout(() => {
+            conversationMemory.extractInsights(messageData.conversationId)
+              .catch(err => console.error("Error extracting insights:", err));
+          }, 100);
+
+          // If this is the end of a "topic" in the conversation, we might want to trigger
+          // a summarization to capture the completed discussion
+          const messageCount = messages.length + 2; // +2 for this exchange
+          if (messageCount > 0 && messageCount % 10 === 0) {
+            // Every 10 messages, trigger a summarization (non-blocking)
+            setTimeout(() => {
+              conversationMemory.summarizeConversation(messageData.conversationId)
+                .catch(err => console.error("Error summarizing conversation:", err));
+            }, 100);
+          }
+          
           // Return both messages
           return res.status(201).json({
             userMessage,
