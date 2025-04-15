@@ -1,92 +1,64 @@
 import { LLMFactory } from '../llm/factory';
-import { createVectorStore } from '../vectorstore';
-import { MultiStepRetrieval } from '../rag/multi-step-retrieval';
 import { personalizationManager } from './personalization';
 import { fineTuningManager } from './fine-tuning';
-import { ModelProvider } from '../../shared/schema';
+import { HybridSearch } from '../rag/hybrid-search';
+import { MultiStepRetrieval } from '../rag/multi-step-retrieval';
+import { QueryReformulation } from '../rag/query-reformulation';
+import { createVectorStore } from '../vectorstore';
 
 /**
- * Integrates learning capabilities into the main system
+ * Integrates all learning capabilities into one central module
  */
-export class LearningIntegration {
-  private llmFactory: LLMFactory;
-  private multiStepRetrieval: MultiStepRetrieval;
+class LearningIntegration {
   initialized: boolean = false;
-  
-  constructor(llmFactory: LLMFactory) {
-    this.llmFactory = llmFactory;
-    const vectorStore = createVectorStore();
-    this.multiStepRetrieval = new MultiStepRetrieval(vectorStore, llmFactory);
-  }
+  private llmFactory: LLMFactory | null = null;
+  private hybridSearch: HybridSearch | null = null;
+  private multiStepRetrieval: MultiStepRetrieval | null = null;
+  private queryReformulation: QueryReformulation | null = null;
   
   /**
-   * Initialize the integration services
+   * Initialize all learning components
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
     
     try {
-      console.log("Initializing LearningIntegration services...");
+      console.log("Initializing learning integration...");
       
-      // Initialize multi-step retrieval
-      await this.multiStepRetrieval.initialize();
+      // Create LLM factory
+      this.llmFactory = new LLMFactory();
       
-      // Schedule regular fine-tuning
-      // Only in production to avoid unnecessary API calls during development
-      if (process.env.NODE_ENV === 'production') {
-        fineTuningManager.scheduleRegularFineTuning(30); // Once every 30 days
-      }
+      // Initialize personalization manager
+      personalizationManager.setLLMFactory(this.llmFactory);
+      
+      // Initialize fine-tuning manager and schedule jobs
+      fineTuningManager.setLLMFactory(this.llmFactory);
+      fineTuningManager.scheduleRegularFineTuning(30); // Every 30 days
+      
+      // Initialize RAG components
+      const vectorStore = createVectorStore();
+      this.hybridSearch = new HybridSearch(vectorStore);
+      this.multiStepRetrieval = new MultiStepRetrieval(this.llmFactory, vectorStore);
+      this.queryReformulation = new QueryReformulation(this.llmFactory);
       
       this.initialized = true;
-      console.log("LearningIntegration services initialized successfully");
+      console.log("Learning integration initialized successfully");
     } catch (error) {
-      console.error("Error initializing LearningIntegration:", error);
-      // Don't throw, allow the application to continue
+      console.error("Error initializing learning integration:", error);
+      throw error;
     }
   }
   
   /**
-   * Enhance a prompt with personalization and context
+   * Learn from user's input text
    * @param userId User ID
-   * @param conversationId Conversation ID
-   * @param prompt Original prompt
-   * @returns Enhanced prompt
-   */
-  async enhancePrompt(userId: number, conversationId: number, prompt: string): Promise<string> {
-    try {
-      // Get personalized context based on user history
-      const personalContext = await personalizationManager.generatePersonalizedContext(
-        userId, 
-        conversationId
-      );
-      
-      // Get vocabulary context
-      const vocabularyContext = await personalizationManager.getVocabularyContext(userId);
-      
-      // Combine contexts with the original prompt
-      let enhancedPrompt = prompt;
-      
-      if (personalContext) {
-        enhancedPrompt = `${personalContext}\n\n${enhancedPrompt}`;
-      }
-      
-      if (vocabularyContext) {
-        enhancedPrompt = `${vocabularyContext}\n\n${enhancedPrompt}`;
-      }
-      
-      return enhancedPrompt;
-    } catch (error) {
-      console.error("Error enhancing prompt:", error);
-      return prompt; // Return original prompt if enhancement fails
-    }
-  }
-  
-  /**
-   * Learn from user input - extract vocabulary patterns and store them
-   * @param userId User ID
-   * @param text User input text
+   * @param text Input text
    */
   async learnFromUserInput(userId: number, text: string): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
     try {
       // Learn vocabulary patterns
       await personalizationManager.learnVocabularyPatterns(userId, text);
@@ -96,58 +68,81 @@ export class LearningIntegration {
   }
   
   /**
-   * Execute an advanced RAG search using multiple techniques
-   * @param query User query
+   * Enhance a prompt with personalized context
+   * @param userId User ID
+   * @param conversationId Conversation ID
+   * @param userMessage Original user message
+   * @returns Enhanced prompt
+   */
+  async enhancePrompt(userId: number, conversationId: number, userMessage: string): Promise<string> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    try {
+      // First, try to reformulate the query for better retrieval
+      let enhancedQuery = userMessage;
+      
+      if (this.queryReformulation) {
+        try {
+          const reformulated = await this.queryReformulation.reformulateQuery(userMessage);
+          if (reformulated) {
+            enhancedQuery = reformulated;
+            console.log("Query reformulated:", reformulated);
+          }
+        } catch (error) {
+          console.error("Error reformulating query:", error);
+        }
+      }
+      
+      return enhancedQuery;
+    } catch (error) {
+      console.error("Error enhancing prompt:", error);
+      return userMessage; // Fall back to original message
+    }
+  }
+  
+  /**
+   * Perform advanced search using multiple techniques
+   * @param query Search query
    * @param limit Maximum number of results
    * @returns Search results
    */
-  async advancedSearch(query: string, limit: number = 5): Promise<any[]> {
-    try {
-      return await this.multiStepRetrieval.retrieveForComplexQuery(query, limit);
-    } catch (error) {
-      console.error("Error in advanced search:", error);
-      return []; // Return empty results on error
+  async advancedSearch(query: string, limit: number = 5): Promise<Array<{id: number, score: number, content: string}>> {
+    if (!this.initialized) {
+      await this.initialize();
     }
-  }
-  
-  /**
-   * Check if we have fine-tuned models available
-   * @param provider Model provider
-   * @returns Available fine-tuned models
-   */
-  async getAvailableFineTunedModels(provider: ModelProvider = 'gpt'): Promise<string[]> {
+    
     try {
-      if (provider !== 'gpt') {
-        return []; // Currently only OpenAI models support fine-tuning in our system
+      if (this.multiStepRetrieval) {
+        // Try multi-step retrieval first
+        try {
+          const multiStepResults = await this.multiStepRetrieval.retrieveDocuments(query, limit);
+          if (multiStepResults.length > 0) {
+            return multiStepResults;
+          }
+        } catch (error) {
+          console.error("Error in multi-step retrieval:", error);
+        }
       }
       
-      const models = await fineTuningManager.listAvailableModels();
-      return models.map(model => model.id);
-    } catch (error) {
-      console.error("Error getting fine-tuned models:", error);
-      return [];
-    }
-  }
-  
-  /**
-   * Start a new fine-tuning job for a specific user
-   * @param userId User ID to fine-tune for
-   * @param baseModel Base model to fine-tune
-   * @returns Job ID of the fine-tuning job
-   */
-  async startFineTuningForUser(userId: number, baseModel: string = 'gpt-4o'): Promise<string> {
-    try {
-      // Prepare training data for this user
-      const trainingFilePath = await fineTuningManager.prepareTrainingData(userId);
+      if (this.hybridSearch) {
+        // Fall back to hybrid search
+        try {
+          return await this.hybridSearch.search(query, limit);
+        } catch (error) {
+          console.error("Error in hybrid search:", error);
+        }
+      }
       
-      // Start fine-tuning job
-      return await fineTuningManager.startOpenAIFineTuning(trainingFilePath, baseModel);
+      // Return empty array if all methods fail
+      return [];
     } catch (error) {
-      console.error("Error starting fine-tuning for user:", error);
-      throw error;
+      console.error("Error in advanced search:", error);
+      return [];
     }
   }
 }
 
-// Create a singleton instance
-export const learningIntegration = new LearningIntegration(new LLMFactory());
+// Export singleton instance
+export const learningIntegration = new LearningIntegration();

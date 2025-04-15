@@ -1,218 +1,103 @@
 import { VectorStore } from '../vectorstore';
-import { storage } from '../../storage';
-
-// BM25 Parameters
-const k1 = 1.2;  // Term frequency saturation
-const b = 0.75;  // Document length normalization
-
-interface DocumentIndex {
-  [docId: number]: {
-    terms: Map<string, number>,
-    length: number
-  }
-}
 
 /**
- * Hybrid search combining BM25 keyword search with vector embeddings
+ * Implements hybrid search combining vector and keyword-based search
  */
 export class HybridSearch {
   private vectorStore: VectorStore;
-  private documentIndex: DocumentIndex = {};
-  private termFreq: Map<string, number> = new Map();
-  private avgDocLength: number = 0;
-  private docCount: number = 0;
-  private initialized: boolean = false;
   
-  /**
-   * Create a new hybrid search
-   * @param vectorStore Vector store for embedding-based search
-   */
   constructor(vectorStore: VectorStore) {
     this.vectorStore = vectorStore;
   }
   
   /**
-   * Initialize the BM25 index
-   * @param documents Document content to index
-   */
-  async initialize(documents: {id: number, content: string}[]): Promise<void> {
-    if (this.initialized) return;
-    
-    try {
-      this.documentIndex = {};
-      this.termFreq = new Map();
-      this.docCount = documents.length;
-      let totalLength = 0;
-      
-      // Process each document
-      for (const doc of documents) {
-        const terms = this.tokenize(doc.content);
-        const termFreq = new Map<string, number>();
-        
-        // Count term frequencies
-        for (const term of terms) {
-          termFreq.set(term, (termFreq.get(term) || 0) + 1);
-          this.termFreq.set(term, (this.termFreq.get(term) || 0) + 1);
-        }
-        
-        // Store document info
-        this.documentIndex[doc.id] = {
-          terms: termFreq,
-          length: terms.length
-        };
-        
-        totalLength += terms.length;
-      }
-      
-      // Calculate average document length
-      this.avgDocLength = this.docCount ? totalLength / this.docCount : 0;
-      
-      this.initialized = true;
-      console.log(`BM25 index initialized with ${this.docCount} documents`);
-      console.log(`Average document length: ${this.avgDocLength} terms`);
-      console.log(`Vocabulary size: ${this.termFreq.size} terms`);
-    } catch (error) {
-      console.error("Error initializing BM25 index:", error);
-    }
-  }
-  
-  /**
-   * Tokenize text into terms (words)
-   * @param text Input text
-   * @returns Array of terms
-   */
-  private tokenize(text: string): string[] {
-    // Simplistic tokenization
-    return text.toLowerCase()
-      .replace(/[^\w\s]/g, ' ')  // Replace punctuation with spaces
-      .split(/\s+/)              // Split on whitespace
-      .filter(term => term.length > 2 && !this.isStopWord(term));  // Remove short terms and stop words
-  }
-  
-  /**
-   * Check if a term is a stop word
-   * @param term Term to check
-   * @returns True if stop word
-   */
-  private isStopWord(term: string): boolean {
-    const stopWords = new Set([
-      'the', 'and', 'are', 'for', 'was', 'with', 'they', 'this', 'that', 'have',
-      'from', 'not', 'but', 'what', 'all', 'were', 'when', 'where', 'who', 'will',
-      'more', 'than', 'each', 'some', 'can', 'its', 'into'
-    ]);
-    
-    return stopWords.has(term);
-  }
-  
-  /**
-   * Calculate BM25 score for a document and query
-   * @param docId Document ID
-   * @param queryTerms Query terms
-   * @returns BM25 score
-   */
-  private calculateBM25Score(docId: number, queryTerms: string[]): number {
-    if (!this.documentIndex[docId]) return 0;
-    
-    const docInfo = this.documentIndex[docId];
-    let score = 0;
-    
-    for (const term of queryTerms) {
-      const termFreqInDoc = docInfo.terms.get(term) || 0;
-      if (termFreqInDoc === 0) continue;
-      
-      // Number of documents containing this term
-      const docsWithTerm = this.termFreq.get(term) || 0;
-      if (docsWithTerm === 0) continue;
-      
-      // IDF (Inverse Document Frequency)
-      const idf = Math.log(1 + (this.docCount - docsWithTerm + 0.5) / (docsWithTerm + 0.5));
-      
-      // Term frequency normalized by document length
-      const tf = termFreqInDoc / (1 - b + b * (docInfo.length / this.avgDocLength));
-      
-      // BM25 term contribution
-      const termScore = idf * (tf * (k1 + 1)) / (tf + k1);
-      score += termScore;
-    }
-    
-    return score;
-  }
-  
-  /**
-   * Search using hybrid approach (BM25 + vector similarity)
+   * Perform hybrid search using both vector similarity and keyword matching
    * @param query Search query
    * @param limit Maximum number of results
-   * @param alpha Weight for BM25 scores (1-alpha = vector weight)
-   * @returns Hybrid search results
+   * @returns Search results
    */
-  async search(query: string, limit: number = 5, alpha: number = 0.3): Promise<any[]> {
+  async search(query: string, limit: number = 5): Promise<Array<{id: number, score: number, content: string}>> {
     try {
-      // Step 1: Vector search
+      // Get vector similarity results
       const vectorResults = await this.vectorStore.searchSimilarDocuments(query, limit * 2);
       
-      // Step 2: BM25 search
-      const queryTerms = this.tokenize(query);
-      const bm25Scores = new Map<number, number>();
+      // For each result, fetch the document content
+      const resultsWithContent = await Promise.all(
+        vectorResults.map(async (result) => {
+          const content = await this.vectorStore.getDocumentById(result.id);
+          return {
+            id: result.id,
+            score: result.score,
+            content: content || ""
+          };
+        })
+      );
       
-      // Calculate BM25 scores for all documents in the index
-      for (const docId of Object.keys(this.documentIndex).map(Number)) {
-        const score = this.calculateBM25Score(docId, queryTerms);
-        if (score > 0) {
-          bm25Scores.set(docId, score);
-        }
-      }
+      // Filter out results with empty content
+      const validResults = resultsWithContent.filter(r => r.content.length > 0);
       
-      // Convert to array and sort by score
-      const bm25Results = Array.from(bm25Scores.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, limit * 2);
+      // Apply additional keyword-based scoring
+      const enhancedResults = this.applyKeywordScoring(validResults, query);
       
-      // Step 3: Combine results
-      const hybridScores = new Map<number, number>();
-      
-      // Normalize BM25 scores
-      const maxBM25 = Math.max(...bm25Results.map(r => r[1]), 0.001);
-      for (const [id, score] of bm25Results) {
-        hybridScores.set(id, (score / maxBM25) * alpha);
-      }
-      
-      // Normalize and add vector scores
-      const maxVector = Math.max(...vectorResults.map(r => r.score), 0.001);
-      for (const result of vectorResults) {
-        const normalizedVectorScore = (result.score / maxVector) * (1 - alpha);
-        hybridScores.set(result.id, (hybridScores.get(result.id) || 0) + normalizedVectorScore);
-      }
-      
-      // Sort and limit results
-      const hybridResults = Array.from(hybridScores.entries())
-        .sort((a, b) => b[1] - a[1])
+      // Sort by combined score and limit results
+      return enhancedResults
+        .sort((a, b) => b.score - a.score)
         .slice(0, limit);
-      
-      // Get document contents and information
-      const documents = [];
-      
-      for (const [id, score] of hybridResults) {
-        const document = await storage.getDocument(id);
-        if (document) {
-          const content = await this.vectorStore.getDocumentById(id);
-          if (content) {
-            documents.push({
-              id: document.id,
-              title: document.title,
-              content: content,
-              score: score
-            });
-          }
-        }
-      }
-      
-      return documents;
     } catch (error) {
       console.error("Error in hybrid search:", error);
-      
-      // Fall back to vector search
-      console.log("Falling back to vector search only");
-      return this.vectorStore.searchSimilarDocuments(query, limit);
+      return [];
     }
+  }
+  
+  /**
+   * Apply additional keyword-based scoring to search results
+   * @param results Search results with content
+   * @param query Original query
+   * @returns Enhanced results with combined scores
+   */
+  private applyKeywordScoring(
+    results: Array<{id: number, score: number, content: string}>,
+    query: string
+  ): Array<{id: number, score: number, content: string}> {
+    // Extract keywords from query (simple approach - split by spaces and filter common words)
+    const stopWords = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'about', 'of']);
+    const keywords = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !stopWords.has(word));
+    
+    if (keywords.length === 0) {
+      return results; // No meaningful keywords to match
+    }
+    
+    return results.map(result => {
+      // Calculate keyword matches
+      const content = result.content.toLowerCase();
+      let keywordMatchScore = 0;
+      
+      // Count exact matches
+      for (const keyword of keywords) {
+        // Check for exact word matches using boundaries
+        const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+        const matches = content.match(regex);
+        
+        if (matches) {
+          // More weight to matches near the beginning of the document
+          const firstIndex = content.indexOf(keyword);
+          const positionFactor = Math.max(0, 1 - (firstIndex / 1000));
+          
+          // Award points for each match, with diminishing returns
+          keywordMatchScore += 0.05 * Math.min(5, matches.length) * (1 + positionFactor);
+        }
+      }
+      
+      // Combine scores (70% vector similarity, 30% keyword matches)
+      const combinedScore = (result.score * 0.7) + (keywordMatchScore * 0.3);
+      
+      return {
+        ...result,
+        score: combinedScore
+      };
+    });
   }
 }

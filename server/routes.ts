@@ -38,7 +38,7 @@ const upload = multer({
 // Initialize services
 const llmFactory = new LLMFactory();
 const documentProcessor = new DocumentProcessor();
-const conversationMemory = new ConversationMemory(storage);
+const conversationMemory = new ConversationMemory();
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -255,7 +255,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
           
           // Prepare memory context from conversation history
-          const memoryContext = await conversationMemory.getConversationContext(
+          const memoryContext = await conversationMemory.generateContext(
+            conversation.userId,
             messageData.conversationId
           );
           
@@ -321,7 +322,7 @@ ${result.content}
           // Asynchronously analyze and extract insights from the conversation 
           // to enhance long-term memory (non-blocking)
           setTimeout(() => {
-            conversationMemory.extractInsights(messageData.conversationId)
+            conversationMemory.extractInsightsFromConversation(conversation.userId, messageData.conversationId)
               .catch(err => console.error("Error extracting insights:", err));
           }, 100);
 
@@ -331,7 +332,7 @@ ${result.content}
           if (messageCount > 0 && messageCount % 10 === 0) {
             // Every 10 messages, trigger a summarization (non-blocking)
             setTimeout(() => {
-              conversationMemory.summarizeConversation(messageData.conversationId)
+              conversationMemory.saveConversationSummary(conversation.userId, messageData.conversationId)
                 .catch(err => console.error("Error summarizing conversation:", err));
             }, 100);
           }

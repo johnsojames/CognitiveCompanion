@@ -71,7 +71,12 @@ class ClaudeLLM implements LLMProvider {
         ]
       });
       
-      return response.content[0].text;
+      // Handle response format - check if it's an array or single object
+      if (Array.isArray(response.content)) {
+        return response.content[0].text;
+      } else {
+        return response.content.toString();
+      }
     } catch (error) {
       console.error("Error generating Claude response:", error);
       throw error;

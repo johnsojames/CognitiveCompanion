@@ -1,218 +1,156 @@
-import { LLMFactory } from "../llm/factory";
-import { ModelProvider } from "@shared/schema";
+import { LLMFactory } from '../llm/factory';
 
 /**
- * Query reformulation result
- */
-interface ReformulationResult {
-  originalQuery: string;
-  expandedQuery: string;
-  alternativeQueries: string[];
-}
-
-/**
- * Query reformulation service to improve RAG search results
+ * Implements query reformulation techniques to improve search results
  */
 export class QueryReformulation {
   private llmFactory: LLMFactory;
-  private preferredProvider: ModelProvider = 'gpt';
-  private preferredModel: string = 'gpt-4o';
   
-  /**
-   * Create a new query reformulation service
-   * @param llmFactory LLM factory to use for generating reformulations
-   */
   constructor(llmFactory: LLMFactory) {
     this.llmFactory = llmFactory;
   }
   
   /**
-   * Set the preferred LLM provider and model
-   * @param provider LLM provider
-   * @param model Model name
-   */
-  setPreferredModel(provider: ModelProvider, model: string): void {
-    this.preferredProvider = provider;
-    this.preferredModel = model;
-  }
-  
-  /**
-   * Reformulate a query to improve search results
+   * Reformulate a query to improve search effectiveness
    * @param query Original query
-   * @param context Optional context to help with reformulation
-   * @returns Reformulated queries
+   * @returns Reformulated query or null if reformulation failed
    */
-  async reformulateQuery(query: string, context?: string): Promise<ReformulationResult> {
-    try {
-      const llm = this.llmFactory.getLLMProvider(this.preferredProvider, this.preferredModel);
-      
-      // Build prompt for query reformulation
-      const prompt = this.buildReformulationPrompt(query, context);
-      
-      // Generate reformulations
-      const response = await llm.generateResponse(prompt, "", []);
-      
-      // Parse the response
-      return this.parseReformulationResponse(query, response);
-    } catch (error) {
-      console.error("Error reformulating query:", error);
-      // Return original query if reformulation fails
-      return {
-        originalQuery: query,
-        expandedQuery: query,
-        alternativeQueries: []
-      };
-    }
-  }
-  
-  /**
-   * Build a prompt for query reformulation
-   * @param query Original query
-   * @param context Optional context to help with reformulation
-   * @returns Prompt for the LLM
-   */
-  private buildReformulationPrompt(query: string, context?: string): string {
-    let prompt = `
-You are a search query reformulation expert. Your task is to analyze the original query and generate:
-1. An expanded version that includes relevant synonyms and related concepts
-2. Three alternative phrasings that might yield better search results
-
-The output should be in this format:
-EXPANDED: <expanded query with synonyms and related terms>
-ALT1: <alternative phrasing 1>
-ALT2: <alternative phrasing 2>
-ALT3: <alternative phrasing 3>
-
-Original query: "${query}"
-`;
-
-    if (context) {
-      prompt += `\nAdditional context that may help with reformulation:\n${context}\n`;
+  async reformulateQuery(query: string): Promise<string | null> {
+    // Check if the query actually needs reformulation
+    if (!this.needsReformulation(query)) {
+      return query; // Use original query if it's already good
     }
     
-    return prompt;
-  }
-  
-  /**
-   * Parse the LLM response into a structured result
-   * @param originalQuery Original query
-   * @param response LLM response
-   * @returns Structured reformulation result
-   */
-  private parseReformulationResponse(originalQuery: string, response: string): ReformulationResult {
     try {
-      const lines = response.split('\n').filter(line => line.trim().length > 0);
-      
-      let expandedQuery = originalQuery;
-      const alternativeQueries: string[] = [];
-      
-      for (const line of lines) {
-        if (line.startsWith('EXPANDED:')) {
-          expandedQuery = line.replace('EXPANDED:', '').trim();
-        } else if (line.startsWith('ALT1:') || line.startsWith('ALT2:') || line.startsWith('ALT3:')) {
-          const alt = line.replace(/ALT\d:/, '').trim();
-          if (alt) {
-            alternativeQueries.push(alt);
-          }
-        }
+      // Try to use LLM for reformulation first
+      const llmReformulated = await this.llmReformulate(query);
+      if (llmReformulated) {
+        return llmReformulated;
       }
       
-      return {
-        originalQuery,
-        expandedQuery,
-        alternativeQueries
-      };
+      // Fall back to rule-based reformulation
+      return this.ruleBasedReformulate(query);
     } catch (error) {
-      console.error("Error parsing reformulation response:", error);
-      return {
-        originalQuery,
-        expandedQuery: originalQuery,
-        alternativeQueries: []
-      };
+      console.error("Error in query reformulation:", error);
+      return query; // Return original query on error
     }
   }
   
   /**
-   * Execute multiple searches with reformulated queries and merge results
-   * This would be integrated with your search system
-   * @param search Function that performs the actual search
+   * Check if a query needs reformulation
+   * @param query Query to check
+   * @returns True if query should be reformulated
+   */
+  private needsReformulation(query: string): boolean {
+    const queryLength = query.trim().length;
+    
+    // Very short queries can benefit from expansion
+    if (queryLength < 5) return true;
+    
+    // Very long queries can benefit from focusing
+    if (queryLength > 200) return true;
+    
+    // Single word queries generally need expansion
+    if (!query.includes(' ')) return true;
+    
+    // Queries that are questions can benefit from extraction
+    if (query.includes('?')) return true;
+    
+    // Check for vague terms that indicate reformulation could help
+    const vaguePhrases = ['this', 'that', 'what', 'how', 'tell me about', 'explain'];
+    for (const phrase of vaguePhrases) {
+      if (query.toLowerCase().includes(phrase)) return true;
+    }
+    
+    return false; // No obvious need for reformulation
+  }
+  
+  /**
+   * Use LLM to reformulate query
    * @param query Original query
-   * @param limit Maximum number of results
-   * @returns Combined search results
+   * @returns Reformulated query or null if operation failed
    */
-  async searchWithReformulation<T>(
-    search: (query: string, limit: number) => Promise<T[]>,
-    query: string,
-    limit: number = 5
-  ): Promise<T[]> {
+  private async llmReformulate(query: string): Promise<string | null> {
     try {
-      // Get reformulations
-      const reformulations = await this.reformulateQuery(query);
+      // Try Claude model if available
+      const llm = this.llmFactory.getLLMProvider("claude", "claude-3-7-sonnet-20250219");
       
-      // Execute searches in parallel
-      const searchPromises = [
-        search(reformulations.originalQuery, limit),
-        search(reformulations.expandedQuery, limit)
-      ];
+      const prompt = `I need help reformulating the following search query to make it more effective for document retrieval.
+
+Original query: "${query}"
+
+Please reformulate this query to:
+1. Make it more precise and specific
+2. Include relevant keywords
+3. Remove any unnecessary conversational elements
+4. Convert questions into keyword-rich statements
+5. Keep it concise (under 30 words)
+
+Only provide the reformulated query, nothing else. Do not use quotation marks in your response.`;
+
+      const response = await llm.generateResponse(prompt, "", []);
       
-      // Add alternative queries
-      for (const altQuery of reformulations.alternativeQueries) {
-        searchPromises.push(search(altQuery, limit));
+      // Validate the response
+      const reformulated = response.trim();
+      if (reformulated && reformulated.length > 0 && reformulated !== query) {
+        return reformulated;
       }
       
-      // Wait for all searches to complete
-      const searchResults = await Promise.all(searchPromises);
-      
-      // Merge and deduplicate results
-      // This assumes T has an 'id' property for deduplication
-      const mergedResults: T[] = [];
-      const seenIds = new Set<any>();
-      
-      // Helper to add unique results
-      const addUniqueResults = (results: T[]) => {
-        for (const result of results) {
-          // @ts-ignore - Assuming T has an id property
-          const id = result.id;
-          if (!seenIds.has(id)) {
-            seenIds.add(id);
-            mergedResults.push(result);
-          }
-        }
-      };
-      
-      // Add results in order of priority
-      // Original query results first
-      addUniqueResults(searchResults[0]);
-      
-      // Expanded query results next
-      addUniqueResults(searchResults[1]);
-      
-      // Alternative query results last
-      for (let i = 2; i < searchResults.length; i++) {
-        addUniqueResults(searchResults[i]);
-      }
-      
-      // Limit final results
-      return mergedResults.slice(0, limit);
+      return null; // LLM didn't provide a good reformulation
     } catch (error) {
-      console.error("Error in search with reformulation:", error);
-      // Fallback to original search
-      return search(query, limit);
+      console.error("Error in LLM query reformulation:", error);
+      return null;
     }
   }
-}
-
-// Create a singleton instance
-let _instance: QueryReformulation | null = null;
-
-/**
- * Get the query reformulation instance
- * @param llmFactory LLM factory to use
- * @returns QueryReformulation instance
- */
-export function getQueryReformulation(llmFactory: LLMFactory): QueryReformulation {
-  if (!_instance) {
-    _instance = new QueryReformulation(llmFactory);
+  
+  /**
+   * Use rule-based techniques to reformulate query
+   * @param query Original query
+   * @returns Reformulated query
+   */
+  private ruleBasedReformulate(query: string): string {
+    const originalQuery = query.trim();
+    let reformulated = originalQuery;
+    
+    // Remove common conversational starters
+    const conversationalPrefixes = [
+      'can you', 'could you', 'please', 'i want to know', 
+      'tell me about', 'what is', 'how to', 'explain'
+    ];
+    
+    for (const prefix of conversationalPrefixes) {
+      if (reformulated.toLowerCase().startsWith(prefix)) {
+        reformulated = reformulated.substring(prefix.length).trim();
+      }
+    }
+    
+    // Remove question marks and other unnecessary punctuation
+    reformulated = reformulated.replace(/\?+/g, '');
+    reformulated = reformulated.replace(/[!.,;:]+/g, ' ');
+    
+    // Remove filler words
+    const fillerWords = ['a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been'];
+    let words = reformulated.split(/\s+/).filter(word => !fillerWords.includes(word.toLowerCase()));
+    
+    // If we have a very short query, try to add context from the original
+    if (words.length < 2 && originalQuery.split(/\s+/).length > words.length) {
+      const originalWords = originalQuery.split(/\s+/);
+      const meaningfulWords = originalWords.filter(
+        word => word.length > 3 && !fillerWords.includes(word.toLowerCase())
+      );
+      if (meaningfulWords.length > words.length) {
+        words = meaningfulWords;
+      }
+    }
+    
+    // Rejoin words
+    reformulated = words.join(' ').trim();
+    
+    // If somehow we've completely lost the query, revert to original
+    if (reformulated.length < 2) {
+      return originalQuery;
+    }
+    
+    return reformulated;
   }
-  return _instance;
 }
