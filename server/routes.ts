@@ -464,6 +464,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // === Memory routes ===
+  
+  // Get all memory for a user
+  app.get('/api/memory/:userId', async (req, res) => {
+    try {
+      const userId = parseInt(req.params.userId);
+      
+      if (isNaN(userId)) {
+        return res.status(400).json({ message: "Invalid user ID" });
+      }
+      
+      const memory = await conversationMemory.getUserMemory(userId);
+      res.json(memory);
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Get a specific memory entry by type and key
+  app.get('/api/memory/:userId/:type/:key', async (req, res) => {
+    try {
+      const userId = parseInt(req.params.userId);
+      const { type, key } = req.params;
+      
+      if (isNaN(userId)) {
+        return res.status(400).json({ message: "Invalid user ID" });
+      }
+      
+      const memoryEntry = await storage.getMemoryEntryByKey(userId, key, type);
+      
+      if (!memoryEntry) {
+        return res.status(404).json({ message: "Memory entry not found" });
+      }
+      
+      res.json(memoryEntry);
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Store a user preference explicitly
+  app.post('/api/memory/preference', async (req, res) => {
+    try {
+      const { userId, key, value, importance } = req.body;
+      
+      if (!userId || !key || !value) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+      
+      await conversationMemory.storeUserPreference(
+        parseInt(userId), 
+        key, 
+        value, 
+        importance ? parseInt(importance) : undefined
+      );
+      
+      res.json({ success: true });
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
   // === Settings routes ===
   
   // Get settings for a user

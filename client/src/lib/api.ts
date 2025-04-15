@@ -107,3 +107,21 @@ export const settingsAPI = {
   update: (data: InsertSettings) => 
     apiRequest<Settings>('POST', '/api/settings', data),
 };
+
+// Memory API
+export const memoryAPI = {
+  getUserMemory: (userId: number) => 
+    apiRequest<{
+      summaries: any[],
+      insights: any[],
+      preferences: any[]
+    }>('GET', `/api/memory/${userId}`),
+  
+  getMemoryEntry: (userId: number, type: string, key: string) => 
+    apiRequest<any>('GET', `/api/memory/${userId}/${type}/${key}`),
+  
+  storePreference: (userId: number, key: string, value: string, importance?: number) => 
+    apiRequest<{success: boolean}>('POST', '/api/memory/preference', {
+      userId, key, value, importance
+    }),
+};
