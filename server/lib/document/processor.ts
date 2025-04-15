@@ -2,26 +2,83 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as util from 'util';
 import vectorStore from '../vectorstore';
+import { documentChunker } from './chunker';
+import { db } from '../../db';
+import { documentChunks, documents, InsertDocumentChunk } from '@shared/schema';
+import { eq } from 'drizzle-orm';
+import OpenAI from 'openai';
 
 const readFile = util.promisify(fs.readFile);
 const readdir = util.promisify(fs.readdir);
 const stat = util.promisify(fs.stat);
 
+// Initialize OpenAI client for embeddings
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 export class DocumentProcessor {
-  // Process a document and add it to the vector store
+  // Generate embedding for a text chunk
+  private async generateEmbedding(text: string): Promise<number[]> {
+    try {
+      // Truncate text to avoid token limits
+      const truncatedText = text.slice(0, 8000);
+      
+      const response = await openai.embeddings.create({
+        model: "text-embedding-3-small",
+        input: truncatedText,
+      });
+      
+      return response.data[0].embedding;
+    } catch (error) {
+      console.error("Error generating embedding:", error);
+      throw new Error("Failed to generate embedding");
+    }
+  }
+  
+  // Process a document by chunking and adding to vector store
   async processDocument(documentId: number, filePath: string, fileType: string): Promise<void> {
     try {
       console.log(`Processing document ${documentId} (${fileType}) at ${filePath}`);
       
+      // Extract full text content
       const content = await this.extractText(filePath, fileType);
       
       if (!content) {
         throw new Error("Failed to extract content from document");
       }
       
-      // Add document to vector store
-      await vectorStore.addDocument(documentId, content);
-      console.log(`Document ${documentId} successfully processed and added to vector store`);
+      // Split document into chunks
+      const chunks = documentChunker.splitDocument(documentId, content);
+      console.log(`Document split into ${chunks.length} chunks`);
+      
+      // Process each chunk and store in database
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        
+        try {
+          // Generate embedding
+          const embedding = await this.generateEmbedding(chunk.content);
+          
+          // Store chunk in database
+          await db.insert(documentChunks).values({
+            documentId: chunk.metadata.documentId,
+            chunkIndex: chunk.metadata.chunkIndex,
+            content: chunk.content,
+            metadata: chunk.metadata,
+            embedding: JSON.stringify(embedding)
+          });
+          
+          console.log(`Processed chunk ${i+1}/${chunks.length} for document ${documentId}`);
+        } catch (error) {
+          console.error(`Error processing chunk ${i+1}/${chunks.length}:`, error);
+        }
+      }
+      
+      // Mark document as vectorized
+      await db.update(documents)
+        .set({ vectorized: true })
+        .where(eq(documents.id, documentId));
+      
+      console.log(`Document ${documentId} successfully processed and added to database`);
       
       return;
     } catch (error) {
@@ -107,6 +164,34 @@ export class DocumentProcessor {
   // Search for relevant documents based on a query
   async searchRelevantDocuments(query: string, limit: number = 3): Promise<Array<{id: number, score: number}>> {
     try {
+      // Generate embedding for the query
+      const queryEmbedding = await this.generateEmbedding(query);
+      
+      // First try to search in the database (pgvector)
+      try {
+        // Convert embedding to string
+        const embeddingStr = JSON.stringify(queryEmbedding);
+        
+        // Execute the search query
+        const results = await db.execute<{document_id: number, similarity: number}>(
+          `SELECT document_id, 1 - (embedding::float8[]::vector <=> $1::float8[]::vector) as similarity 
+           FROM document_chunks 
+           ORDER BY similarity DESC 
+           LIMIT $2`,
+          [embeddingStr, limit]
+        );
+        
+        if (results.length > 0) {
+          return results.map(row => ({
+            id: row.document_id,
+            score: row.similarity
+          }));
+        }
+      } catch (dbError) {
+        console.error("Error searching in database:", dbError);
+      }
+      
+      // Fallback to vector store
       return await vectorStore.searchSimilarDocuments(query, limit);
     } catch (error) {
       console.error(`Error searching documents for "${query}":`, error);
