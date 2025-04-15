@@ -5,8 +5,10 @@ import { useToast } from "@/hooks/use-toast";
 import ChatArea from "@/components/conversation/chat-area";
 import ChatInput from "@/components/conversation/chat-input";
 import ConversationHeader from "@/components/conversation/conversation-header";
+import { ConversationMemory } from "@/components/memory/conversation-memory";
 import { conversationsAPI, messagesAPI } from "@/lib/api";
 import { useConversationStore } from "@/store/conversation";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export default function Conversation() {
   const [, params] = useRoute<{ id: string }>("/conversation/:id");
@@ -94,6 +96,8 @@ export default function Conversation() {
     return null; // We'll redirect in the useEffect
   }
   
+  const isMobile = useIsMobile();
+  
   return (
     <div className="flex-1 flex flex-col h-full">
       <ConversationHeader 
@@ -102,17 +106,27 @@ export default function Conversation() {
         onShowResources={handleShowResources}
       />
       
-      <ChatArea 
-        messages={conversation.messages || []} 
-        isLoading={isResponding} 
-        workingWithDocuments={conversation.documents ? conversation.documents.map(doc => doc.title) : []}
-      />
-      
-      <ChatInput 
-        conversationId={conversationId!}
-        onSendMessage={handleSendMessage}
-        disabled={isResponding}
-      />
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <ChatArea 
+            messages={conversation.messages || []} 
+            isLoading={isResponding} 
+            workingWithDocuments={conversation.documents ? conversation.documents.map(doc => doc.title) : []}
+          />
+          
+          <ChatInput 
+            conversationId={conversationId!}
+            onSendMessage={handleSendMessage}
+            disabled={isResponding}
+          />
+        </div>
+        
+        {!isMobile && (
+          <div className="w-72 border-l border-border p-4 overflow-y-auto hidden lg:block">
+            <ConversationMemory conversationId={conversationId!} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

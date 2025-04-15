@@ -513,12 +513,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Missing required fields" });
       }
       
-      await conversationMemory.storeUserPreference(
-        parseInt(userId), 
-        key, 
-        value, 
-        importance ? parseInt(importance) : undefined
-      );
+      // Store the preference
+      const existingEntry = await storage.getMemoryEntryByKey(parseInt(userId), key, 'preference');
+      let memoryEntry;
+      
+      if (existingEntry) {
+        // Update existing entry
+        memoryEntry = await storage.updateMemoryEntry(
+          existingEntry.id, 
+          value, 
+          importance ? parseInt(importance) : undefined
+        );
+      } else {
+        // Create new entry
+        memoryEntry = await storage.createMemoryEntry({
+          userId: parseInt(userId),
+          conversationId: null,
+          type: 'preference',
+          key,
+          value,
+          importance: importance ? parseInt(importance) : 7 // Default importance is 7
+        });
+      }
+      
+      res.json(memoryEntry);
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Store a conversation insight
+  app.post('/api/memory/insight', async (req, res) => {
+    try {
+      const { userId, conversationId, key, value, importance } = req.body;
+      
+      if (!userId || !conversationId || !key || !value) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+      
+      // Store the insight
+      const existingEntry = await storage.getMemoryEntryByKey(parseInt(userId), key, 'insight');
+      let memoryEntry;
+      
+      if (existingEntry) {
+        // Update existing entry
+        memoryEntry = await storage.updateMemoryEntry(
+          existingEntry.id, 
+          value, 
+          importance ? parseInt(importance) : undefined
+        );
+      } else {
+        // Create new entry
+        memoryEntry = await storage.createMemoryEntry({
+          userId: parseInt(userId),
+          conversationId: parseInt(conversationId),
+          type: 'insight',
+          key,
+          value,
+          importance: importance ? parseInt(importance) : 5 // Default importance is 5
+        });
+      }
+      
+      res.json(memoryEntry);
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Store a conversation summary
+  app.post('/api/memory/summary', async (req, res) => {
+    try {
+      const { userId, conversationId, value } = req.body;
+      
+      if (!userId || !conversationId || !value) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+      
+      // Generate a timestamp-based key for the summary
+      const key = `summary_${Date.now()}`;
+      
+      // Create new summary entry
+      const memoryEntry = await storage.createMemoryEntry({
+        userId: parseInt(userId),
+        conversationId: parseInt(conversationId),
+        type: 'summary',
+        key,
+        value,
+        importance: 8 // Summaries have high importance by default
+      });
+      
+      res.json(memoryEntry);
+    } catch (err) {
+      handleErrors(err, res);
+    }
+  });
+  
+  // Delete a memory entry
+  app.delete('/api/memory/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid memory entry ID" });
+      }
+      
+      const success = await storage.deleteMemoryEntry(id);
+      
+      if (!success) {
+        return res.status(404).json({ message: "Memory entry not found" });
+      }
       
       res.json({ success: true });
     } catch (err) {
