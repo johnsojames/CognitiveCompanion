@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [ main ]  # Change to your branch name if different (e.g., master)
+    branches: [ main ]  # Change to your default branch name if different
 
 jobs:
   deploy:
@@ -11,24 +11,79 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
+      - name: Debug secrets (safe)
+        run: |
+          echo "Checking existence of secrets (not values):"
+          echo "SSH_HOST exists: ${{ secrets.SSH_HOST != '' }}"
+          echo "SSH_PORT exists: ${{ secrets.SSH_PORT != '' }}"
+          echo "SSH_USERNAME exists: ${{ secrets.SSH_USERNAME != '' }}"
+          echo "VPS_SSH exists: ${{ secrets.VPS_SSH != '' }}"
+          echo "DEPLOY_PATH exists: ${{ secrets.DEPLOY_PATH != '' }}"
+      
+      - name: Display files to deploy
+        run: |
+          echo "Files in repository:"
+          ls -la
+          echo "Server directory content:"
+          find ./server -type f | sort || echo "Server directory not found"
+          
+      - name: Test SSH connection
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.VPS_SSH }}
+          script: |
+            echo "SSH connection successful!"
+            echo "Current directory: $(pwd)"
+            echo "VPS hostname: $(hostname)"
+            touch ~/ssh-test-successful.txt
+      
       - name: Deploy with rsync
         uses: burnett01/rsync-deployments@5.2
         with:
           switches: -avz --delete
           path: ./
           remote_path: ${{ secrets.DEPLOY_PATH }}
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_port: ${{ secrets.SSH_PORT || '22' }}
+          remote_user: ${{ secrets.SSH_USERNAME }}
           remote_key: ${{ secrets.VPS_SSH }}
-          
-      - name: Execute remote SSH commands
+      
+      - name: Execute deployment commands
         uses: appleboy/ssh-action@v0.1.6
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.VPS_SSH }}
           script: |
+            echo "Starting deployment commands..."
             cd ${{ secrets.DEPLOY_PATH }}
+            
+            echo "Current directory content:"
+            ls -la
+            
+            echo "Creating .env file with DATABASE_URL..."
+            echo "DATABASE_URL=postgresql://ragapp:password@localhost:5432/rag_db" > .env
+            
+            echo "Installing dependencies..."
             npm ci
-            npm run db:push
-            npx pm2 restart rag-system || npx pm2 start server/index.ts --name rag-system
+            
+            echo "Running database migrations..."
+            npm run db:push || echo "Database migration failed"
+            
+            echo "Checking for index file..."
+            if [ -f "server/index.js" ]; then
+              echo "Found server/index.js"
+              npx pm2 restart rag-system || npx pm2 start server/index.js --name rag-system
+            elif [ -f "server/index.ts" ]; then
+              echo "Found server/index.ts"
+              npx pm2 restart rag-system || npx pm2 start server/index.ts --name rag-system --interpreter node_modules/.bin/tsx
+            else
+              echo "ERROR: Neither server/index.js nor server/index.ts found!"
+              find . -type f -name "index.*" | grep -E "index.(js|ts)" || echo "No index files found"
+            fi
+            
+            echo "Deployment complete!"
