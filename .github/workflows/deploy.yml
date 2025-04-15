@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [ main ]  # Change to your branch name if different
+    branches: [ main ]  # Change to your branch name if different (e.g., master)
 
 jobs:
   deploy:
@@ -17,15 +17,17 @@ jobs:
           switches: -avz --delete
           path: ./
           remote_path: ${{ secrets.DEPLOY_PATH }}
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_port: ${{ secrets.SSH_PORT }}
+          remote_user: ${{ secrets.SSH_USERNAME }}
           remote_key: ${{ secrets.VPS_SSH }}
           
       - name: Execute remote SSH commands
         uses: appleboy/ssh-action@v0.1.6
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.VPS_SSH }}
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
