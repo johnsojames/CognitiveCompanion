@@ -1,153 +1,188 @@
-import { Document } from "@shared/schema";
-import * as fs from 'fs';
-import * as path from 'path';
-import pkg from 'pg';
-import OpenAI from 'openai';
-import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
+import { Pool } from '@neondatabase/serverless';
+import { db, pool } from '../db';
 
-// Initialize OpenAI client
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+/**
+ * Search result from vector store
+ */
+export interface VectorSearchResult {
+  id: number;
+  score: number;
+}
 
-// Database configuration
-const pool = new pkg.Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-// Simple vector store interface
+/**
+ * Vector store for document embeddings
+ */
 export interface VectorStore {
-  addDocument(documentId: number, text: string): Promise<void>;
-  searchSimilarDocuments(query: string, limit: number): Promise<Array<{id: number, score: number}>>;
+  /**
+   * Add a document to the vector store
+   * @param id Document ID
+   * @param content Document content
+   * @param metadata Optional metadata
+   */
+  addDocument(id: number, content: string, metadata?: Record<string, any>): Promise<void>;
+  
+  /**
+   * Search for similar documents
+   * @param query Query text
+   * @param limit Maximum number of results
+   * @returns Search results with scores
+   */
+  searchSimilarDocuments(query: string, limit?: number): Promise<VectorSearchResult[]>;
+  
+  /**
+   * Get document content by ID
+   * @param id Document ID
+   * @returns Document content
+   */
   getDocumentById(id: number): Promise<string | null>;
+  
+  /**
+   * Remove a document from the vector store
+   * @param id Document ID
+   */
+  removeDocument(id: number): Promise<void>;
 }
 
-// Helper function to generate embeddings using OpenAI
-async function generateEmbedding(text: string): Promise<number[]> {
-  try {
-    // For large texts, truncate to avoid token limits
-    const truncatedText = text.slice(0, 8000);
-    
-    const response = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: truncatedText,
-    });
-    
-    return response.data[0].embedding;
-  } catch (error) {
-    console.error("Error generating embedding:", error);
-    throw new Error("Failed to generate embedding");
-  }
-}
-
-// In-memory vector store implementation (fallback)
-export class InMemoryVectorStore implements VectorStore {
-  private documents: Map<number, string> = new Map();
+/**
+ * PostgreSQL-based vector store that uses pgvector
+ */
+class PostgresVectorStore implements VectorStore {
+  private pool: Pool;
+  private openaiApiKey: string | undefined;
   
-  async addDocument(documentId: number, text: string): Promise<void> {
-    this.documents.set(documentId, text);
+  constructor(pool: Pool) {
+    this.pool = pool;
+    this.openaiApiKey = process.env.OPENAI_API_KEY;
+    this.initialize();
   }
   
-  async searchSimilarDocuments(query: string, limit: number): Promise<Array<{id: number, score: number}>> {
-    // Simple keyword search in the absence of real vector similarity
-    const results: Array<{id: number, score: number}> = [];
-    
-    // Convert Map entries to array for compatibility
-    const entries = Array.from(this.documents.entries());
-    
-    for (let i = 0; i < entries.length; i++) {
-      const [id, text] = entries[i];
-      
-      // Calculate a simple relevance score based on term frequency
-      const queryTerms = query.toLowerCase().split(/\s+/);
-      let score = 0;
-      
-      for (const term of queryTerms) {
-        if (term.length < 3) continue; // Skip short terms
-        
-        const regex = new RegExp(term, 'gi');
-        const matches = text.match(regex);
-        if (matches) {
-          score += matches.length;
-        }
-      }
-      
-      if (score > 0) {
-        results.push({ id, score });
-      }
-    }
-    
-    // Sort by score and limit
-    return results
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-  }
-  
-  async getDocumentById(id: number): Promise<string | null> {
-    return this.documents.get(id) || null;
-  }
-}
-
-// Define types for database rows
-interface DocumentVectorRow {
-  document_id: number;
-  content: string;
-  similarity?: number;
-  rank?: number;
-}
-
-// PgVector store implementation
-export class PgVectorStore implements VectorStore {
-  constructor(private pool: any) {}
-  
-  async addDocument(documentId: number, text: string): Promise<void> {
+  /**
+   * Initialize the vector store by creating necessary tables and extensions
+   */
+  private async initialize(): Promise<void> {
     try {
-      // Generate embedding for the document
-      const embedding = await generateEmbedding(text);
+      // Create pgvector extension if it doesn't exist
+      await this.pool.query(`CREATE EXTENSION IF NOT EXISTS vector;`);
       
-      // Insert document and embedding into database
-      await this.pool.query(
-        'INSERT INTO document_vectors (document_id, content, embedding) VALUES ($1, $2, $3)',
-        [documentId, text, embedding]
-      );
+      // Create documents table if it doesn't exist
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS document_vectors (
+          id INT PRIMARY KEY,
+          content TEXT NOT NULL,
+          metadata JSONB,
+          embedding vector(1536),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
       
-      console.log(`Document ${documentId} added to vector store`);
+      console.log('Using PostgreSQL vector store');
     } catch (error) {
-      console.error("Error adding document to vector store:", error);
-      throw new Error("Failed to add document to vector store");
+      console.error("Error initializing PostgreSQL vector store:", error);
     }
   }
   
-  async searchSimilarDocuments(query: string, limit: number): Promise<Array<{id: number, score: number}>> {
+  /**
+   * Generate an embedding for text using OpenAI
+   * @param text Text to embed
+   * @returns Embedding vector
+   */
+  private async generateEmbedding(text: string): Promise<number[]> {
+    if (!this.openaiApiKey) {
+      throw new Error("OpenAI API key not set");
+    }
+    
     try {
-      // Generate embedding for query
-      const queryEmbedding = await generateEmbedding(query);
+      const response = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.openaiApiKey}`
+        },
+        body: JSON.stringify({
+          input: text.slice(0, 8000), // OpenAI has a token limit
+          model: 'text-embedding-3-small'
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+      }
+      
+      const result = await response.json();
+      return result.data[0].embedding;
+    } catch (error) {
+      console.error("Error generating embedding:", error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Add a document to the vector store
+   * @param id Document ID
+   * @param content Document content
+   * @param metadata Optional metadata
+   */
+  async addDocument(id: number, content: string, metadata?: Record<string, any>): Promise<void> {
+    try {
+      // Generate embedding
+      const embedding = await this.generateEmbedding(content);
+      
+      // Insert or update document in the database
+      await this.pool.query(`
+        INSERT INTO document_vectors (id, content, metadata, embedding)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (id) DO UPDATE 
+        SET content = $2, metadata = $3, embedding = $4
+      `, [id, content, metadata ? JSON.stringify(metadata) : null, embedding]);
+      
+      console.log(`Document ${id} added to vector store`);
+    } catch (error) {
+      console.error(`Error adding document ${id} to vector store:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Search for similar documents
+   * @param query Query text
+   * @param limit Maximum number of results (default 5)
+   * @returns Search results with scores
+   */
+  async searchSimilarDocuments(query: string, limit: number = 5): Promise<VectorSearchResult[]> {
+    try {
+      // Generate embedding for the query
+      const embedding = await this.generateEmbedding(query);
       
       // Search for similar documents using cosine similarity
-      const result = await this.pool.query(
-        `SELECT document_id, 1 - (embedding <=> $1) as similarity 
-         FROM document_vectors 
-         ORDER BY similarity DESC 
-         LIMIT $2`,
-        [queryEmbedding, limit]
-      );
+      const result = await this.pool.query(`
+        SELECT id, 1 - (embedding <=> $1) as score
+        FROM document_vectors
+        ORDER BY embedding <=> $1
+        LIMIT $2
+      `, [embedding, limit]);
       
-      // Format results
-      return result.rows.map((row: DocumentVectorRow) => ({
-        id: row.document_id,
-        score: row.similarity || 0
+      return result.rows.map(row => ({
+        id: row.id,
+        score: row.score
       }));
     } catch (error) {
       console.error("Error searching similar documents:", error);
-      // Fallback to a simple search if embedding fails
-      return this.fallbackSearch(query, limit);
+      return [];
     }
   }
   
+  /**
+   * Get document content by ID
+   * @param id Document ID
+   * @returns Document content
+   */
   async getDocumentById(id: number): Promise<string | null> {
     try {
-      const result = await this.pool.query(
-        'SELECT content FROM document_vectors WHERE document_id = $1',
-        [id]
-      );
+      const result = await this.pool.query(`
+        SELECT content FROM document_vectors WHERE id = $1
+      `, [id]);
       
       if (result.rows.length === 0) {
         return null;
@@ -155,56 +190,108 @@ export class PgVectorStore implements VectorStore {
       
       return result.rows[0].content;
     } catch (error) {
-      console.error("Error retrieving document:", error);
+      console.error(`Error getting document ${id}:`, error);
       return null;
     }
   }
   
-  // Fallback search method using simple text matching
-  private async fallbackSearch(query: string, limit: number): Promise<Array<{id: number, score: number}>> {
+  /**
+   * Remove a document from the vector store
+   * @param id Document ID
+   */
+  async removeDocument(id: number): Promise<void> {
     try {
-      // Use basic text search as fallback
-      const result = await this.pool.query(
-        `SELECT document_id, ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) as rank 
-         FROM document_vectors 
-         WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
-         ORDER BY rank DESC 
-         LIMIT $2`,
-        [query, limit]
-      );
+      await this.pool.query(`
+        DELETE FROM document_vectors WHERE id = $1
+      `, [id]);
       
-      return result.rows.map((row: DocumentVectorRow) => ({
-        id: row.document_id,
-        score: row.rank || 0
-      }));
+      console.log(`Document ${id} removed from vector store`);
     } catch (error) {
-      console.error("Error in fallback search:", error);
-      return [];
+      console.error(`Error removing document ${id} from vector store:`, error);
+      throw error;
     }
   }
 }
 
-// Factory function to create vector store
-export function createVectorStore(type: string = 'postgres'): VectorStore {
-  switch (type) {
-    case 'postgres':
-      // Check if DATABASE_URL is available
-      if (process.env.DATABASE_URL) {
-        console.log("Using PostgreSQL vector store");
-        return new PgVectorStore(pool);
-      } else {
-        console.warn("DATABASE_URL not found, falling back to in-memory store");
-        return new InMemoryVectorStore();
+/**
+ * In-memory vector store for development and testing
+ */
+class MemoryVectorStore implements VectorStore {
+  private documents: Map<number, { content: string, metadata?: Record<string, any> }> = new Map();
+  
+  /**
+   * Add a document to the vector store
+   * @param id Document ID
+   * @param content Document content
+   * @param metadata Optional metadata
+   */
+  async addDocument(id: number, content: string, metadata?: Record<string, any>): Promise<void> {
+    this.documents.set(id, { content, metadata });
+  }
+  
+  /**
+   * Search for similar documents
+   * Very simple keyword matching for demo purposes
+   * @param query Query text
+   * @param limit Maximum number of results
+   * @returns Search results with scores
+   */
+  async searchSimilarDocuments(query: string, limit: number = 5): Promise<VectorSearchResult[]> {
+    const results: VectorSearchResult[] = [];
+    const queryWords = query.toLowerCase().split(/\s+/);
+    
+    // Simple term frequency scoring
+    this.documents.forEach((doc, id) => {
+      const content = doc.content.toLowerCase();
+      let score = 0;
+      
+      for (const word of queryWords) {
+        if (content.includes(word)) {
+          score += 1;
+        }
       }
-    case 'memory':
-      console.log("Using in-memory vector store");
-      return new InMemoryVectorStore();
-    default:
-      console.log("Unknown vector store type, using in-memory store");
-      return new InMemoryVectorStore();
+      
+      if (score > 0) {
+        results.push({ id, score: score / queryWords.length });
+      }
+    });
+    
+    // Sort by score descending and limit results
+    return results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+  
+  /**
+   * Get document content by ID
+   * @param id Document ID
+   * @returns Document content
+   */
+  async getDocumentById(id: number): Promise<string | null> {
+    const doc = this.documents.get(id);
+    return doc ? doc.content : null;
+  }
+  
+  /**
+   * Remove a document from the vector store
+   * @param id Document ID
+   */
+  async removeDocument(id: number): Promise<void> {
+    this.documents.delete(id);
   }
 }
 
-// Singleton instance
-const vectorStore = createVectorStore();
-export default vectorStore;
+/**
+ * Create a vector store based on environment
+ * @returns Vector store implementation
+ */
+export function createVectorStore(): VectorStore {
+  // Use PostgreSQL if connected
+  if (pool) {
+    return new PostgresVectorStore(pool);
+  }
+  
+  // Fallback to memory store (for development)
+  console.log('Using in-memory vector store (no database connection)');
+  return new MemoryVectorStore();
+}

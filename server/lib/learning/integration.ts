@@ -1,14 +1,12 @@
+import { LLMFactory } from '../llm/factory';
+import { createVectorStore } from '../vectorstore';
+import { MultiStepRetrieval } from '../rag/multi-step-retrieval';
 import { personalizationManager } from './personalization';
 import { fineTuningManager } from './fine-tuning';
-import { MultiStepRetrieval } from '../rag/multi-step-retrieval';
-import { LLMFactory } from '../llm/factory';
-import { storage } from '../../storage';
-import { createVectorStore } from '../vectorstore';
-import { ModelProvider } from '@shared/schema';
+import { ModelProvider } from '../../shared/schema';
 
 /**
- * Integration service that combines learning capabilities and RAG techniques
- * into our main application flow
+ * Integrates learning capabilities into the main system
  */
 export class LearningIntegration {
   private llmFactory: LLMFactory;

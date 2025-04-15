@@ -1,78 +1,177 @@
-import { ModelProvider } from "@shared/schema";
-import { ClaudeProvider } from "./providers/claude";
-import { GPTProvider } from "./providers/gpt";
-import { DeepSeekProvider } from "./providers/deepseek";
+import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
+import { personalizationManager } from '../learning/personalization';
+import { fineTuningManager } from '../learning/fine-tuning';
 
-// Interface for LLM providers
+/**
+ * Interface for LLM providers
+ */
 export interface LLMProvider {
-  generateResponse(
-    userQuery: string, 
-    conversationContext: string, 
-    documentContexts?: string[]
-  ): Promise<string>;
-  getModelName(): string;
+  /**
+   * Generate a response to a prompt
+   * @param prompt The prompt to generate a response for
+   * @param systemContext Additional system context
+   * @param documentContexts Document contexts
+   * @returns Generated response
+   */
+  generateResponse(prompt: string, systemContext: string, documentContexts: string[]): Promise<string>;
 }
 
-// LLM Factory class for creating appropriate LLM provider instances
-export class LLMFactory {
-  // Cache providers to avoid creating new instances for the same model
-  private providers: Map<string, LLMProvider> = new Map();
+/**
+ * Claude (Anthropic) LLM provider
+ */
+class ClaudeLLM implements LLMProvider {
+  private client: Anthropic;
+  private model: string;
   
-  // Get an LLM provider based on provider name and model
-  getLLMProvider(provider: ModelProvider, model: string): LLMProvider {
-    const key = `${provider}:${model}`;
-    
-    // Return cached provider if exists
-    if (this.providers.has(key)) {
-      return this.providers.get(key)!;
-    }
-    
-    // Create a new provider
-    let llmProvider: LLMProvider;
-    
-    switch (provider) {
-      case "claude":
-        llmProvider = new ClaudeProvider(model);
-        break;
-      case "gpt":
-        llmProvider = new GPTProvider(model);
-        break;
-      case "deepseek":
-        llmProvider = new DeepSeekProvider(model);
-        break;
-      default:
-        throw new Error(`Unsupported LLM provider: ${provider}`);
-    }
-    
-    // Cache the provider
-    this.providers.set(key, llmProvider);
-    
-    return llmProvider;
+  /**
+   * Create a new Claude LLM provider
+   * @param model Model name
+   */
+  constructor(model: string = 'claude-3-7-sonnet-20250219') {
+    // the newest Anthropic model is "claude-3-7-sonnet-20250219" which was released February 24, 2025
+    this.client = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY || ''
+    });
+    this.model = model;
   }
   
-  // Get available models for a provider
-  getAvailableModels(provider: ModelProvider): string[] {
-    switch (provider) {
-      case "claude":
-        return [
-          "claude-3-7-sonnet-20250219",
-          "claude-3-opus-20240229",
-          "claude-3-sonnet-20240229",
-          "claude-3-haiku-20240307"
-        ];
-      case "gpt":
-        return [
-          "gpt-4o",
-          "gpt-4-turbo",
-          "gpt-3.5-turbo"
-        ];
-      case "deepseek":
-        return [
-          "deepseek-coder",
-          "deepseek-chat"
-        ];
+  /**
+   * Generate a response using Claude
+   * @param prompt User prompt
+   * @param systemContext Additional system context
+   * @param documentContexts Document contexts
+   * @returns Generated response
+   */
+  async generateResponse(prompt: string, systemContext: string, documentContexts: string[]): Promise<string> {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY not set");
+    }
+    
+    let systemPrompt = `You are a helpful AI assistant. You have access to conversation history and relevant documents.`;
+    
+    if (systemContext) {
+      systemPrompt += `\n\n${systemContext}`;
+    }
+    
+    let fullPrompt = prompt;
+    
+    // Add document contexts if available
+    if (documentContexts.length > 0) {
+      fullPrompt = `${prompt}\n\nRelevant document context:\n${documentContexts.join('\n\n')}`;
+    }
+    
+    try {
+      const response = await this.client.messages.create({
+        model: this.model,
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: [
+          { role: 'user', content: fullPrompt }
+        ]
+      });
+      
+      return response.content[0].text;
+    } catch (error) {
+      console.error("Error generating Claude response:", error);
+      throw error;
+    }
+  }
+}
+
+/**
+ * OpenAI GPT LLM provider
+ */
+class OpenAILLM implements LLMProvider {
+  private client: OpenAI;
+  private model: string;
+  
+  /**
+   * Create a new OpenAI LLM provider
+   * @param model Model name
+   */
+  constructor(model: string = 'gpt-4o') {
+    // the newest OpenAI model is "gpt-4o" which was released May 13, 2024. do not change this unless explicitly requested by the user
+    this.client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY || ''
+    });
+    this.model = model;
+  }
+  
+  /**
+   * Generate a response using OpenAI
+   * @param prompt User prompt
+   * @param systemContext Additional system context
+   * @param documentContexts Document contexts
+   * @returns Generated response
+   */
+  async generateResponse(prompt: string, systemContext: string, documentContexts: string[]): Promise<string> {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY not set");
+    }
+    
+    // System message with context
+    let systemPrompt = `You are a helpful AI assistant. You have access to conversation history and relevant documents.`;
+    
+    if (systemContext) {
+      systemPrompt += `\n\n${systemContext}`;
+    }
+    
+    const messages: Array<{role: string, content: string}> = [
+      { role: 'system', content: systemPrompt }
+    ];
+    
+    // Add document contexts if available
+    if (documentContexts.length > 0) {
+      const documentsContent = `Here are relevant documents for your reference:\n${documentContexts.join('\n\n')}`;
+      messages.push({ role: 'user', content: documentsContent });
+      messages.push({ role: 'assistant', content: "I've reviewed these documents and will use them to inform my response." });
+    }
+    
+    // Add the user's prompt
+    messages.push({ role: 'user', content: prompt });
+    
+    try {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        messages: messages,
+        max_tokens: 4000
+      });
+      
+      return response.choices[0].message.content || '';
+    } catch (error) {
+      console.error("Error generating OpenAI response:", error);
+      throw error;
+    }
+  }
+}
+
+/**
+ * LLM factory to create LLM providers
+ */
+export class LLMFactory {
+  /**
+   * Create an LLM provider
+   * @param provider Provider name (claude, gpt)
+   * @param model Model name
+   * @returns LLM provider
+   */
+  getLLMProvider(provider: string, model: string): LLMProvider {
+    // Set up personalization and fine-tuning
+    personalizationManager.setLLMFactory(this);
+    fineTuningManager.setLLMFactory(this);
+    
+    switch (provider.toLowerCase()) {
+      case 'claude':
+        return new ClaudeLLM(model);
+      case 'gpt':
+        // Check if this is a fine-tuned model
+        if (model.includes('ft-')) {
+          console.log(`Using fine-tuned model: ${model}`);
+        }
+        return new OpenAILLM(model);
       default:
-        return [];
+        throw new Error(`Unsupported LLM provider: ${provider}`);
     }
   }
 }

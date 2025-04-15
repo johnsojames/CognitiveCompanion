@@ -1,206 +1,114 @@
 import { storage } from "../../storage";
-import { MemoryEntry } from "@shared/schema";
+import { LLMFactory } from "../llm/factory";
 
 /**
- * Personalization manager that adjusts AI responses based on user history
+ * Manages user personalization through learning and context adaptation
  */
-export class PersonalizationManager {
+class PersonalizationManager {
+  private llmFactory: LLMFactory | null = null;
+  
   /**
-   * Generates a personalized context for LLM prompts
-   * @param userId The user ID to personalize for
-   * @param conversationId Current conversation ID
-   * @returns A personalized context string to add to prompts
+   * Set the LLM factory for generating insights
+   * @param llmFactory The LLM factory instance
+   */
+  setLLMFactory(llmFactory: LLMFactory): void {
+    this.llmFactory = llmFactory;
+  }
+  
+  /**
+   * Generate personalized context for a user's conversation
+   * @param userId User ID
+   * @param conversationId Conversation ID
+   * @returns Personalized context as a string
    */
   async generatePersonalizedContext(userId: number, conversationId: number): Promise<string> {
     try {
-      // Get all memory entries for this user
-      const allMemoryEntries = await this.getUserMemoryEntries(userId);
+      // Get recent memory entries for this user (preferences and insights)
+      const preferences = await storage.getMemoryEntriesByUserId(userId, 'preference');
+      const insights = await storage.getMemoryEntriesByUserId(userId, 'insight');
       
-      // Get conversation-specific entries
-      const conversationEntries = allMemoryEntries.filter(
-        entry => entry.conversationId === conversationId
-      );
+      // Sort by importance (highest first)
+      const sortedPreferences = preferences.sort((a, b) => 
+        (b.importance ?? 0) - (a.importance ?? 0)
+      ).slice(0, 5); // Top 5 preferences
       
-      // Get user preference entries
-      const preferenceEntries = allMemoryEntries.filter(
-        entry => entry.type === 'preference'
-      );
+      const sortedInsights = insights.sort((a, b) => 
+        (b.importance ?? 0) - (a.importance ?? 0)
+      ).slice(0, 5); // Top 5 insights
       
-      // Sort and limit entries based on importance and recency
-      const sortedEntries = this.prioritizeMemoryEntries(allMemoryEntries);
-      const limitedEntries = sortedEntries.slice(0, 10); // Limit to most important 10 entries
+      // Build personalized context
+      let context = "USER CONTEXT:\n";
       
-      // Generate context string
-      let context = "## User Personalization\n";
-      
-      // Add preferences
-      if (preferenceEntries.length > 0) {
-        context += "\nUser preferences:\n";
-        for (const entry of preferenceEntries) {
-          context += `- ${this.formatKey(entry.key)}: ${entry.value}\n`;
+      if (sortedPreferences.length > 0) {
+        context += "User preferences:\n";
+        for (const pref of sortedPreferences) {
+          context += `- ${pref.key}: ${pref.value}\n`;
         }
+        context += "\n";
       }
       
-      // Add other important insights
-      const insights = limitedEntries.filter(entry => entry.type === 'insight');
-      if (insights.length > 0) {
-        context += "\nImportant insights about the user:\n";
-        for (const entry of insights) {
-          context += `- ${this.formatKey(entry.key)}: ${entry.value}\n`;
+      if (sortedInsights.length > 0) {
+        context += "User insights:\n";
+        for (const insight of sortedInsights) {
+          context += `- ${insight.value}\n`;
         }
+        context += "\n";
       }
       
-      // Add conversation-specific context
-      if (conversationEntries.length > 0) {
-        context += "\nRelevant to current conversation:\n";
-        for (const entry of conversationEntries) {
-          context += `- ${this.formatKey(entry.key)}: ${entry.value}\n`;
-        }
+      // If we have no personalized context, return empty string
+      if (sortedPreferences.length === 0 && sortedInsights.length === 0) {
+        return "";
       }
       
       return context;
     } catch (error) {
       console.error("Error generating personalized context:", error);
-      return ""; // Return empty string on error
+      return ""; // Return empty context on error
     }
   }
   
   /**
-   * Prioritizes memory entries based on importance, recency and type
-   * @param entries Memory entries to prioritize
-   * @returns Sorted array of entries
-   */
-  private prioritizeMemoryEntries(entries: MemoryEntry[]): MemoryEntry[] {
-    return entries.sort((a, b) => {
-      // Calculate a score based on importance and recency
-      const scoreA = this.calculateEntryScore(a);
-      const scoreB = this.calculateEntryScore(b);
-      return scoreB - scoreA; // Higher score first
-    });
-  }
-  
-  /**
-   * Calculate a score for an entry based on its properties
-   * @param entry The memory entry to score
-   * @returns A numeric score (higher = more important)
-   */
-  private calculateEntryScore(entry: MemoryEntry): number {
-    // Base score is the importance value
-    let score = entry.importance || 1;
-    
-    // Adjust based on recency (newer entries get higher score)
-    const ageInDays = this.getAgeInDays(entry.lastUpdated);
-    // Decay factor - reduce score by 10% for each 7 days
-    const recencyFactor = Math.pow(0.9, ageInDays / 7);
-    
-    // Adjust based on type
-    const typeMultiplier = this.getTypeMultiplier(entry.type);
-    
-    // Combine factors
-    return score * recencyFactor * typeMultiplier;
-  }
-  
-  /**
-   * Calculate age of an entry in days
-   * @param dateString Date string to calculate age from
-   * @returns Age in days
-   */
-  private getAgeInDays(dateString: string): number {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    return diffMs / (1000 * 60 * 60 * 24);
-  }
-  
-  /**
-   * Get multiplier based on memory entry type
-   * @param type Entry type
-   * @returns Multiplier value
-   */
-  private getTypeMultiplier(type: string): number {
-    switch (type) {
-      case 'preference':
-        return 1.5; // Preferences are most important
-      case 'insight':
-        return 1.2; // Insights are important
-      case 'summary':
-        return 1.0; // Summaries are baseline
-      default:
-        return 1.0;
-    }
-  }
-  
-  /**
-   * Format key string for display
-   * @param key Key to format
-   * @returns Formatted key
-   */
-  private formatKey(key: string): string {
-    return key
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, char => char.toUpperCase());
-  }
-  
-  /**
-   * Get all memory entries for a user
+   * Learn vocabulary and communication patterns from user input
    * @param userId User ID
-   * @returns Array of memory entries
-   */
-  private async getUserMemoryEntries(userId: number): Promise<MemoryEntry[]> {
-    return await storage.getMemoryEntriesByUserId(userId);
-  }
-  
-  /**
-   * Extracts and stores user vocabulary patterns
-   * @param userId User ID
-   * @param text Text to analyze for vocabulary patterns
+   * @param text User input text
    */
   async learnVocabularyPatterns(userId: number, text: string): Promise<void> {
     try {
-      // Simple implementation - extract uncommon words and phrases
-      const words = text.split(/\s+/);
+      if (!this.llmFactory) return;
       
-      // Filter for uncommon words (6+ characters)
-      const uncommonWords = words.filter(word => {
-        const cleaned = word.replace(/[^\w]/g, '');
-        return cleaned.length >= 6; // Words with 6+ characters might be domain-specific
-      });
+      // Use a lightweight model for analysis to save costs
+      const llm = this.llmFactory.getLLMProvider('gpt', 'gpt-4o');
       
-      // Count word frequencies
-      const wordFrequency: Record<string, number> = {};
-      uncommonWords.forEach(word => {
-        const normalized = word.toLowerCase().replace(/[^\w]/g, '');
-        if (normalized) {
-          wordFrequency[normalized] = (wordFrequency[normalized] || 0) + 1;
-        }
-      });
+      // Get previous vocabulary context if exists
+      const existingVocab = await storage.getMemoryEntryByKey(userId, 'vocabulary_patterns', 'learning');
       
-      // Store frequent words as vocabulary preferences
-      for (const [word, count] of Object.entries(wordFrequency)) {
-        if (count >= 2) { // Word appeared at least twice
-          // Check if we already have this word
-          const existingEntry = await storage.getMemoryEntryByKey(
-            userId, 
-            `vocabulary_${word}`,
-            'vocabulary'
-          );
-          
-          if (existingEntry) {
-            // Update count
-            const newCount = parseInt(existingEntry.value) + count;
-            await storage.updateMemoryEntry(existingEntry.id, newCount.toString());
-          } else {
-            // Create new entry
-            await storage.createMemoryEntry({
-              userId,
-              conversationId: null,
-              type: 'vocabulary',
-              key: `vocabulary_${word}`,
-              value: count.toString(),
-              importance: 3 // Low importance by default
-            });
-          }
-        }
+      // Analyze text for vocabulary patterns
+      const prompt = `
+You are a vocabulary and communication style analyst. 
+Analyze the following text to identify vocabulary patterns, communication style, and language preferences.
+Focus on finding distinctive word choices, phrases, formality level, technical terms, or jargon.
+
+User's text: "${text}"
+
+${existingVocab ? 'Previous analysis: ' + existingVocab.value : ''}
+
+Provide a concise summary of 2-3 sentences about the user's vocabulary and communication style.
+`;
+      
+      const analysis = await llm.generateResponse(prompt, "", []);
+      
+      // Save or update vocabulary context
+      if (existingVocab) {
+        await storage.updateMemoryEntry(existingVocab.id, analysis);
+      } else {
+        await storage.createMemoryEntry({
+          userId,
+          conversationId: null,
+          type: 'learning',
+          key: 'vocabulary_patterns',
+          value: analysis,
+          importance: 8 // High importance
+        });
       }
     } catch (error) {
       console.error("Error learning vocabulary patterns:", error);
@@ -208,36 +116,104 @@ export class PersonalizationManager {
   }
   
   /**
-   * Generate vocabulary context based on user's frequent terms
+   * Get vocabulary context for a user
    * @param userId User ID
-   * @returns Context string with vocabulary preferences
+   * @returns Vocabulary context as a string
    */
   async getVocabularyContext(userId: number): Promise<string> {
     try {
-      // Get vocabulary entries
-      const vocabularyEntries = await storage.getMemoryEntriesByUserId(userId, 'vocabulary');
+      const vocabEntry = await storage.getMemoryEntryByKey(userId, 'vocabulary_patterns', 'learning');
       
-      // Sort by frequency (value)
-      const sortedEntries = vocabularyEntries.sort((a, b) => {
-        return parseInt(b.value) - parseInt(a.value);
-      }).slice(0, 15); // Top 15 terms
-      
-      if (sortedEntries.length === 0) return "";
-      
-      let context = "## User Vocabulary Preferences\n";
-      context += "The user frequently uses these specialized terms:\n";
-      
-      for (const entry of sortedEntries) {
-        const term = entry.key.replace('vocabulary_', '');
-        context += `- ${term} (${entry.value} occurrences)\n`;
+      if (vocabEntry) {
+        return `COMMUNICATION STYLE CONTEXT:\n${vocabEntry.value}\n\nPlease adapt to this communication style in your responses.\n`;
       }
       
-      return context;
+      return ""; // No vocabulary context yet
     } catch (error) {
-      console.error("Error generating vocabulary context:", error);
-      return "";
+      console.error("Error getting vocabulary context:", error);
+      return ""; // Return empty context on error
+    }
+  }
+  
+  /**
+   * Update user preferences based on conversation
+   * @param userId User ID
+   * @param conversationId Conversation ID
+   */
+  async updatePreferencesFromConversation(userId: number, conversationId: number): Promise<void> {
+    try {
+      if (!this.llmFactory) return;
+      
+      // Get messages from this conversation
+      const messages = await storage.getMessagesByConversationId(conversationId);
+      
+      // Need at least a few messages to analyze
+      if (messages.length < 3) return;
+      
+      // Use a model for preference analysis
+      const llm = this.llmFactory.getLLMProvider('gpt', 'gpt-4o');
+      
+      // Format conversation for analysis
+      const conversation = messages.map(msg => 
+        `${msg.role.toUpperCase()}: ${msg.content}`
+      ).join('\n\n');
+      
+      // Prompt for preference analysis
+      const prompt = `
+Analyze this conversation to identify user preferences. Look for:
+1. Topics they seem interested in
+2. Opinions or stances they've expressed
+3. Interaction style preferences
+4. Any explicit preferences they've mentioned
+
+Conversation:
+${conversation}
+
+Format your response as a JSON array with objects containing "key" and "value" fields.
+Example: [{"key": "prefers_technical_details", "value": "User seems to prefer detailed technical explanations"}]
+Provide at most 3 inferred preferences.
+`;
+      
+      const analysisJson = await llm.generateResponse(prompt, "", []);
+      
+      // Parse the JSON response
+      try {
+        const preferences = JSON.parse(analysisJson);
+        
+        if (Array.isArray(preferences)) {
+          // Store each detected preference
+          for (const pref of preferences) {
+            if (pref.key && pref.value) {
+              // Check if this preference already exists
+              const existing = await storage.getMemoryEntryByKey(userId, pref.key, 'preference');
+              
+              if (existing) {
+                // Update if significantly different
+                if (existing.value !== pref.value) {
+                  await storage.updateMemoryEntry(existing.id, pref.value);
+                }
+              } else {
+                // Create new preference
+                await storage.createMemoryEntry({
+                  userId,
+                  conversationId: null, // Preferences are global
+                  type: 'preference',
+                  key: pref.key,
+                  value: pref.value,
+                  importance: 6 // Medium importance for inferred preferences
+                });
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error parsing preference analysis:", error);
+      }
+    } catch (error) {
+      console.error("Error updating preferences from conversation:", error);
     }
   }
 }
 
+// Create a singleton instance
 export const personalizationManager = new PersonalizationManager();
