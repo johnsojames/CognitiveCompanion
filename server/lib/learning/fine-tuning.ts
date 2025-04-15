@@ -37,6 +37,12 @@ class FineTuningManager {
       clearInterval(this.finetuningScheduleInterval);
     }
     
+    // For development/prototype, we'll just log that we would schedule this
+    // rather than actually scheduling it to avoid excessive spam
+    console.log(`[SETUP] Would schedule fine-tuning every ${intervalDays} days in production`);
+    
+    // In a production environment, we would use this code:
+    /*
     const intervalMs = intervalDays * 24 * 60 * 60 * 1000;
     
     this.finetuningScheduleInterval = setInterval(async () => {
@@ -64,8 +70,7 @@ class FineTuningManager {
         console.error("Error in scheduled fine-tuning:", error);
       }
     }, intervalMs);
-    
-    console.log(`Scheduled regular fine-tuning every ${intervalDays} days`);
+    */
   }
   
   /**
