@@ -1,36 +1,34 @@
 name: Deploy to VPS
-
+ 
 on:
   push:
-    branches: [ main ]  # Change to your branch name if different (e.g., master) 
-
+    branches: [ main ] # Change to your branch name if different (e.g., master)
+ 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
+        
       - name: Deploy with rsync
         uses: burnett01/rsync-deployments@5.2
         with:
           switches: -avz --delete
           path: ./
           remote_path: ${{ secrets.DEPLOY_PATH }}
-          remote_host: ${{ secrets.SSH_HOST }}
-          remote_port: ${{ secrets.SSH_PORT }}
-          remote_user: ${{ secrets.SSH_USERNAME }}
+          remote_host: ${{ secrets.DEPLOY_HOST }}
+          remote_user: ${{ secrets.DEPLOY_USER }}
           remote_key: ${{ secrets.VPS_SSH }}
           
       - name: Execute remote SSH commands
         uses: appleboy/ssh-action@v0.1.6
         with:
-          host: ${{ secrets.SSH_HOST }}
-          port: ${{ secrets.SSH_PORT }}
-          username: ${{ secrets.SSH_USERNAME }}
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.VPS_SSH }}
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
             npm ci
             npm run db:push
-            npx pm2 restart rag-system || npx pm2 start server/index.js --name rag-system
+            npx pm2 restart rag-system || npx pm2 start server/index.ts --name rag-system --interpreter ./node_modules/.bin/tsx
